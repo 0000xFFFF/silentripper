@@ -7,7 +7,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description='remove silent parts from video using ffmpeg')
 parser.add_argument('-d', '--duration', metavar='sec', type=float, default=1, help="silence duration in seconds (default: 1) (min: 1)")
-parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=1, help="set min duration for each clip (default: 1)")
+parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=1, help="set min duration for each sounded clip (default: 1)")
 parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-30, help="noise in dB (default: -30)")
 parser.add_argument('-c', '--copy', action='store_true', help="use -c option for ffmpeg (fast copy but possible glitchy output)")
 parser.add_argument('-p', '--pause', action='store_true', help="prompt before every action")
