@@ -4,6 +4,7 @@ import os
 import subprocess
 import time
 import argparse
+from pathlib import Path
 
 parser = argparse.ArgumentParser(description='remove silent parts from video using ffmpeg')
 parser.add_argument('-d', '--duration', metavar='sec', type=float, default=1, help="silence duration in seconds (default: 1) (min: 1)")
@@ -14,10 +15,10 @@ parser.add_argument('-p', '--pause', action='store_true', help="prompt before ev
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
 
-file_path = sys.argv[1]
-file_split = os.path.splitext(file_path)
-file_name = file_split[0]
-file_ext  = file_split[1]
+file_path = Path(args.filename.name)
+file_name = file_path.stem
+file_ext = file_path.suffix
+file_fullpath = file_path.resolve().as_posix()
 
 altered = 0
 totaldur_muted   = 0
@@ -37,7 +38,7 @@ ffmpeg_sd = subprocess.Popen(
     '-hide_banner',
     '-vn',
     '-i',
-    file_path,
+    file_fullpath,
     '-af',
     'silencedetect=n=' + str(args.noise) + 'dB:d=' + str(args.duration),
     '-f',
@@ -149,7 +150,7 @@ for i in subvideos:
     if start: startcmd = " -ss " + start
     if end: endcmd = " -to " + end
 
-    s = "ffmpeg -hide_banner -v quiet -i \"" + file_path + "\"" + startcmd + endcmd + " " + addcopystring + " " + outfile
+    s = "ffmpeg -hide_banner -v quiet -i \"" + file_fullpath + "\"" + startcmd + endcmd + " " + addcopystring + " " + outfile
     print(f"{subvideos_counter}/{subvideos_len} ({subvideos_counter/subvideos_len*100:.2f}%) {s} --> {dur} --> ...", end='')
     x = os.system(s)
     print("\b\b\b", end="")
