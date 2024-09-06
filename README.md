@@ -10,5 +10,5 @@ Remove silent parts from video using ffmpeg.
 
 ## Running
 ```
-> silentripper video.mp4 -c
+> silentripper video.mp4
 ```
