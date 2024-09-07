@@ -183,8 +183,14 @@ if args.pause:
 
 # Clean up temporary files
 for _, _, _, output_file in sounded_clips:
-    os.remove(output_file)
-os.remove("clip_list.txt")
+    try:
+        os.remove(output_file)
+    except:
+        pass
+try:
+    os.remove("clip_list.txt")
+except:
+    pass
 
 print("Cleanup complete.")
 
