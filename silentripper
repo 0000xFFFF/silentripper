@@ -19,7 +19,7 @@ args = parser.parse_args()
 input_file_path = Path(args.filename.name)
 file_name = input_file_path.stem
 file_extension = input_file_path.suffix
-full_file_path = input_file_path.resolve().as_posix()
+full_file_path = input_file_path.absolute()
 
 # Global variables
 altered_clips = 0
