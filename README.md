@@ -6,7 +6,7 @@ Remove silent parts from video using ffmpeg.
 
 ## Requirements
 * python
-* ffmpeg
+* ffmpeg (+ffprobe)
 
 ## Running
 ```
