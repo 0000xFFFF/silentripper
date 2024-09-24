@@ -12,3 +12,23 @@ Remove silent parts from video using ffmpeg.
 ```
 ./silentripper video.mp4
 ```
+
+## Usage
+```
+usage: silentripper [-h] [-d sec] [-m sec] [-n dB] [-c] [-p] filename
+
+Remove silent parts from video using FFmpeg
+
+positional arguments:
+  filename
+
+options:
+  -h, --help            show this help message and exit
+  -d sec, --duration sec
+                        Silence duration in seconds (default: 1, min: 1)
+  -m sec, --min_duration sec
+                        Minimum duration for each sounded clip in seconds (default: 0)
+  -n dB, --noise dB     Noise level in dB (default: -30)
+  -c, --copy            Use copy codec for faster but potentially glitchy output (increase -m option for less glitchy output)
+  -p, --pause           Prompt before each action
+```
