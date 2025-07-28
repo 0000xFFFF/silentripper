@@ -9,13 +9,13 @@ Remove silent parts from video using ffmpeg.
 * ffmpeg (+ffprobe)
 
 ## Running
-```
-./silentripper video.mp4
+```sh
+./silentripper <video.mp4>
 ```
 
 # Running - faster cutting
-```
-./silentripper video.mp4 -m 1 -d 1 -c
+```sh
+./silentripper <video.mp4> -m 1 -d 1 -c
 ```
 Set the minimum sounded and muted duration to 1 to avoid glitchy output caused by the "-c" (copy codec) option.
 

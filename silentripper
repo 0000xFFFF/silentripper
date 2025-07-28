@@ -81,7 +81,7 @@ sounded_clips = []
 
 def add_sounded_clip(start, end):
     global altered_clips
-    output_file = f"clip_{len(sounded_clips)+1}.mts"
+    output_file = f"clip_{len(sounded_clips)+1}.mp4"
 
     if end is None:  # If no next mute section, use the total duration of the video
         end = str(total_duration)
@@ -134,14 +134,20 @@ with open("clip_list.txt", "w") as clip_list_file:
     l = len(sounded_clips)
     for i, (start, end, duration, output_file) in enumerate(sounded_clips):
         ffmpeg_cmd = [
-            'ffmpeg', '-hide_banner', '-v', 'quiet',
-            '-y', '-i', full_file_path,
+            'ffmpeg',
+            #'-hide_banner', '-v', 'quiet',
+            '-init_hw_device', 'opencl=ocl:2',
+            '-filter_hw_device', 'ocl',         # Apply OpenCL filters
+            '-y', '-i', str(full_file_path), '-c:v', 'h264_amf',
             '-ss', start, '-to', end
         ]
         if args.copy:
             ffmpeg_cmd += ['-c', 'copy']
 
         ffmpeg_cmd += [output_file]
+
+        #print(ffmpeg_cmd)
+        #print(" ".join(ffmpeg_cmd))
 
         print(f"{i+1}/{l}: {start} -- {end} ({duration}) --> {output_file} -- ...", end='')
 
