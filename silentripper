@@ -5,16 +5,17 @@ import time
 import argparse
 from pathlib import Path
 import concurrent.futures
+import threading
 
 # Argument parsing
 parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')
 parser.add_argument('-d', '--duration', metavar='sec', type=float, default=1, help="Silence duration in seconds (default: 1, min: 1)")
 parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=0, help="Minimum duration for each sounded clip in seconds (default: 0)")
-parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-30, help="Noise level in dB (default: -30)")
+parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-40, help="Noise level in dB (default: -40)")
 parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec for faster but potentially glitchy output")
 parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
 parser.add_argument('-t', '--threads', metavar='N', type=int, default=1, help="Number of worker threads")
-parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: {filename}_result)")
+parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: {filename}_cut)")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
 
@@ -23,7 +24,7 @@ input_file_path = Path(args.filename.name)
 file_name = input_file_path.stem
 file_extension = input_file_path.suffix
 full_file_path = input_file_path.absolute()
-output_file_name = args.output or f"{file_name}_result{file_extension}"
+output_file_name = args.output or f"{file_name}_cut{file_extension}"
 
 # Global variables
 altered_clips = 0
@@ -78,9 +79,7 @@ for idx, (start, end, duration) in enumerate(muted_sections, start=1):
     total_muted_duration += float(duration)
     print(f"{idx}. Start: {start}, End: {end}, Duration: {duration} seconds")
 
-# Create subclips for sounded sections
-sounded_clips = []
-
+sounded_clips = []  # will hold dicts
 def add_sounded_clip(start, end):
     global altered_clips
     output_file = f"clip_{len(sounded_clips)+1}.mp4"
@@ -94,7 +93,13 @@ def add_sounded_clip(start, end):
         end = str(round(float(end) + args.min_duration - duration, 5))
         duration = round(float(end) - float(start), 5)
 
-    sounded_clips.append([start, end, duration, output_file])
+    sounded_clips.append({
+        "start": start,
+        "end": end,
+        "duration": duration,
+        "file": output_file,
+        "success": False
+    })
 
 # Add clips for sounded parts
 if muted_sections:
@@ -110,9 +115,9 @@ if muted_sections:
 
 # Print sounded sections
 print("===[ SOUNDED TIMESTAMPS (OUTPUT FILE, START, END, DURATION) ]===")
-for idx, (start, end, duration, output_file) in enumerate(sounded_clips, start=1):
-    total_sounded_duration += float(duration)
-    print(f"{idx}. Output: {output_file}, Start: {start}, End: {end}, Duration: {duration} seconds")
+for idx, clip in enumerate(sounded_clips, start=1):
+    total_sounded_duration += float(clip["duration"])
+    print(f"{idx}. Output: {clip["file"]}, Start: {clip["start"]}, End: {clip["end"]}, Duration: {clip["duration"]} seconds")
 
 # Convert seconds to HH:MM:SS
 def format_time(seconds):
@@ -127,47 +132,55 @@ print(f"Total sounded duration: {format_time(total_sounded_duration)} ({total_so
 
 # Pause if necessary
 if args.pause:
-    input("Press Enter to start processing...")
+    try:
+        input("Press Enter to clean up temporary files...")
+    except:
+        exit()
 
 # Function to process a single clip
 def process_clip(clip, i, total):
-    start, end, duration, output_file = clip
     ffmpeg_cmd = ['ffmpeg', '-y']
-
     if args.copy:
         ffmpeg_cmd += ['-c', 'copy']
 
-    ffmpeg_cmd += ['-ss', start, '-to', end]
-    ffmpeg_cmd += ['-i', str(full_file_path), output_file]
-    #ffmpeg_cmd += ['-c:v', "libx264", "-c:a", "copy"]
+    ffmpeg_cmd += ['-ss', clip["start"], '-to', clip["end"], '-i', str(full_file_path), clip["file"]]
 
-    print(f"{i}/{total} {output_file}: {start} -- {end} ({duration}) ", end='')
+    print(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']}) ", end='')
 
     start_time = time.time()
     result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     elapsed = time.time() - start_time
 
     if result.returncode == 0:
-        print(f"success (took: {elapsed:.2f}s)")
-        return output_file, True
+        print(f"ok (took: {elapsed:.2f}s)")
+        return clip["file"], True
     else:
-        print("failed")
-        return output_file, False
+        print("fail")
+        return clip["file"], False
 
 num_workers = args.threads
+
+lock = threading.Lock()
 
 # Process clips in parallel
 with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
     total = len(sounded_clips)
-    futures = {executor.submit(process_clip, clip, i, total): clip for i, clip in enumerate(sounded_clips)}
-    with open("clip_list.txt", "w") as clip_list_file:
-        for future in concurrent.futures.as_completed(futures):
-            output_file, success = future.result()
-            if success:
-                clip_list_file.write(f"file '{output_file}'\n")
-                clip_list_file.flush()
-            else:
-                failed_conversions += 1
+    futures = {executor.submit(process_clip, clip, i, total): clip for i, clip in enumerate(sounded_clips, start=1)}
+    for future in concurrent.futures.as_completed(futures):
+        output_file, success = future.result()
+        with lock:
+            for c in sounded_clips:
+                if c["file"] == output_file:
+                    c["success"] = success
+                    if not success:
+                        failed_conversions += 1
+                    break
+
+
+with open("clip_list.txt", "w") as clip_list_file:
+    for clip in sounded_clips:
+        if clip["success"]:
+            clip_list_file.write(f"file '{clip['file']}'\n")
 
 print(f"\nFailed conversions: {failed_conversions}")
 
@@ -191,7 +204,10 @@ else:
 
 # Pause if necessary before cleanup
 if args.pause:
-    input("Press Enter to clean up temporary files...")
+    try:
+        input("Press Enter to clean up temporary files...")
+    except:
+        exit()
 
 # Cleanup temporary files
 for _, _, _, output_file in sounded_clips:
