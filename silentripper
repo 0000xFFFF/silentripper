@@ -175,7 +175,7 @@ print(f"\nFailed conversions: {failed_conversions}")
 # Concatenate sounded clips into final output
 print("===[ CONCAT ]===")
 concat_cmd = [
-    'ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'concat',
+    'ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0',
     '-y', '-i', 'clip_list.txt'
 ]
 if args.copy:
