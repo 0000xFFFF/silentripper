@@ -13,7 +13,7 @@ parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=0
 parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-30, help="Noise level in dB (default: -30)")
 parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec for faster but potentially glitchy output")
 parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
-parser.add_argument('-t', '--threads', metavar='N', type=int, default=4, help="Number of worker threads (only relevant with --copy)")
+parser.add_argument('-t', '--threads', metavar='N', type=int, default=0, help="Number of worker threads")
 parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: {filename}_result)")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
@@ -154,8 +154,7 @@ def process_clip(clip, i, total):
         print("failed")
         return output_file, False
 
-# Number of worker threads (only used if copy is enabled)
-num_workers = args.threads if args.copy else 1
+num_workers = args.threads
 
 # Process clips in parallel
 with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
