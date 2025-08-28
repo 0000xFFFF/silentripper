@@ -137,9 +137,9 @@ def process_clip(clip, i, total):
     if args.copy:
         ffmpeg_cmd += ['-c', 'copy']
 
-    ffmpeg_cmd += ['-ss', start, "-i", str(full_file_path), '-to', end]
+    ffmpeg_cmd += ['-ss', start, '-to', end]
+    ffmpeg_cmd += ['-i', str(full_file_path), output_file]
     #ffmpeg_cmd += ['-c:v', "libx264", "-c:a", "copy"]
-    ffmpeg_cmd += [output_file]
 
     print(f"{i}/{total} {output_file}: {start} -- {end} ({duration}) ", end='')
 
