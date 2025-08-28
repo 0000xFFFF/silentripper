@@ -1,20 +1,20 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import os
-import time
 import subprocess
 import time
 import argparse
 from pathlib import Path
+import concurrent.futures
 
 # Argument parsing
 parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')
 parser.add_argument('-d', '--duration', metavar='sec', type=float, default=1, help="Silence duration in seconds (default: 1, min: 1)")
 parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=0, help="Minimum duration for each sounded clip in seconds (default: 0)")
 parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-30, help="Noise level in dB (default: -30)")
-parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec for faster but potentially glitchy output (increase -m option for less glitchy output)")
-parser.add_argument('-t', '--threads', metavar='N', type=int, default=0, help="Number of threads to use (applied only if --copy is enabled)")
+parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec for faster but potentially glitchy output")
 parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
-parser.add_argument('-o', '--output', metavar='FILE', type=str, help="Output filename (default: {filename}_result)")
+parser.add_argument('-t', '--threads', metavar='N', type=int, default=4, help="Number of worker threads (only relevant with --copy)")
+parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: {filename}_result)")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
 
@@ -23,8 +23,6 @@ input_file_path = Path(args.filename.name)
 file_name = input_file_path.stem
 file_extension = input_file_path.suffix
 full_file_path = input_file_path.absolute()
-
-# Default output file
 output_file_name = args.output or f"{file_name}_result{file_extension}"
 
 # Global variables
@@ -49,15 +47,14 @@ print(f"Noise level.............: {args.noise} dB")
 print(f"Silence duration........: {args.duration} s")
 print(f"Minimum sounded duration: {args.min_duration} s")
 print(f"Copy codec..............: {args.copy}")
-if args.copy:
-    print(f"Threads (copy enabled)..: {args.threads}")
+print(f"Threads.................: {args.threads}")
 print(f"Total video duration....: {total_duration:.2f} s")
 print(f"Output file.............: {output_file_name}")
 
 # Run FFmpeg to detect silent sections
 ffmpeg_proc = subprocess.Popen(
     [
-        'ffmpeg', '-hide_banner', '-vn', '-i', full_file_path,
+        'ffmpeg', '-hide_banner', '-vn', '-i', str(full_file_path),
         '-af', f'silencedetect=n={args.noise}dB:d={args.duration}', '-f', 'null', '-'
     ],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT
@@ -88,11 +85,10 @@ def add_sounded_clip(start, end):
     global altered_clips
     output_file = f"clip_{len(sounded_clips)+1}.mp4"
 
-    if end is None:  # If no next mute section, use the total duration of the video
+    if end is None:
         end = str(total_duration)
 
     duration = round(float(end) - float(start), 5)
-
     if duration < args.min_duration:
         altered_clips += 1
         end = str(round(float(end) + args.min_duration - duration, 5))
@@ -100,13 +96,13 @@ def add_sounded_clip(start, end):
 
     sounded_clips.append([start, end, duration, output_file])
 
-# Add clips for sounded parts between muted sections
+# Add clips for sounded parts
 if muted_sections:
-    # Handle the first sounded section (before the first silence)
+    # Before first silence
     first_mute_start = muted_sections[0][0]
     add_sounded_clip("0", first_mute_start)
 
-    # Handle the sounded sections between silences
+    # Between silences
     for i in range(len(muted_sections)):
         start = muted_sections[i][1]
         end = muted_sections[i+1][0] if i+1 < len(muted_sections) else None
@@ -118,7 +114,7 @@ for idx, (start, end, duration, output_file) in enumerate(sounded_clips, start=1
     total_sounded_duration += float(duration)
     print(f"{idx}. Output: {output_file}, Start: {start}, End: {end}, Duration: {duration} seconds")
 
-# Convert seconds to HH:MM:SS format
+# Convert seconds to HH:MM:SS
 def format_time(seconds):
     return time.strftime("%H:%M:%S", time.gmtime(seconds))
 
@@ -133,42 +129,50 @@ print(f"Total sounded duration: {format_time(total_sounded_duration)} ({total_so
 if args.pause:
     input("Press Enter to start processing...")
 
-# Create a list of clips to concatenate
-with open("clip_list.txt", "w") as clip_list_file:
-    l = len(sounded_clips)
-    for i, (start, end, duration, output_file) in enumerate(sounded_clips):
-        ffmpeg_cmd = [
-            'ffmpeg',
-            '-y', '-i', str(full_file_path)
-        ]
+# Function to process a single clip
+def process_clip(clip, i, total):
+    start, end, duration, output_file = clip
+    ffmpeg_cmd = ['ffmpeg', '-y', '-i', str(full_file_path)]
 
-        # Use copy codec if requested
-        if args.copy:
-            ffmpeg_cmd += ['-c', 'copy']
-            if args.threads > 0:
-                ffmpeg_cmd += ['-threads', str(args.threads)]
-        else:
-            ffmpeg_cmd += ['-c:v', 'h264_amf']
+    if args.copy:
+        ffmpeg_cmd += ['-c', 'copy']
+    else:
+        ffmpeg_cmd += ['-c:v', 'h264_amf']
 
-        ffmpeg_cmd += ['-ss', start, '-to', end, output_file]
+    ffmpeg_cmd += ['-ss', start, '-to', end, output_file]
 
-        print(f"{i+1}/{l}: {start} -- {end} ({duration}) --> {output_file} -- ...", end='')
+    print(f"{i}/{total} {output_file}: {start} -- {end} ({duration}) ...", end='')
 
-        start_time = time.time()
-        result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        end_time = time.time()
-        elapsed = end_time - start_time
-        if result.returncode == 0:
-            clip_list_file.write(f"file '{output_file}'\n")
-            clip_list_file.flush()
-            print(f"\b\b\bsuccess (took: {elapsed:.2f}s)")
-        else:
-            failed_conversions += 1
-            print("\b\b\bfailed")
+    start_time = time.time()
+    result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    elapsed = time.time() - start_time
+
+    if result.returncode == 0:
+        print(f"success (time taken: {elapsed:.2f}s)")
+        return output_file, True
+    else:
+        print("failed")
+        return output_file, False
+
+# Number of worker threads (only used if copy is enabled)
+num_workers = args.threads if args.copy else 1
+
+# Process clips in parallel
+with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
+    total = len(sounded_clips)
+    futures = {executor.submit(process_clip, clip, i, total): clip for i, clip in enumerate(sounded_clips)}
+    with open("clip_list.txt", "w") as clip_list_file:
+        for future in concurrent.futures.as_completed(futures):
+            output_file, success = future.result()
+            if success:
+                clip_list_file.write(f"file '{output_file}'\n")
+                clip_list_file.flush()
+            else:
+                failed_conversions += 1
 
 print(f"\nFailed conversions: {failed_conversions}")
 
-# Concatenate the sounded clips into the final output file
+# Concatenate sounded clips into final output
 print("===[ CONCAT ]===")
 concat_cmd = [
     'ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'concat',
@@ -176,6 +180,7 @@ concat_cmd = [
 ]
 if args.copy:
     concat_cmd += ['-c', 'copy']
+
 concat_cmd += [output_file_name]
 
 print(f"\nConcatenating clips into: {output_file_name}")
@@ -189,7 +194,7 @@ else:
 if args.pause:
     input("Press Enter to clean up temporary files...")
 
-# Clean up temporary files
+# Cleanup temporary files
 for _, _, _, output_file in sounded_clips:
     try:
         os.remove(output_file)
