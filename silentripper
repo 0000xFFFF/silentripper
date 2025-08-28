@@ -141,7 +141,7 @@ def process_clip(clip, i, total):
 
     ffmpeg_cmd += ['-ss', start, '-to', end, output_file]
 
-    print(f"{i}/{total} {output_file}: {start} -- {end} ({duration}) ...", end='')
+    print(f"{i}/{total} {output_file}: {start} -- {end} ({duration}) ", end='')
 
     start_time = time.time()
     result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
