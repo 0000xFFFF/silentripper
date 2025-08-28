@@ -136,8 +136,6 @@ def process_clip(clip, i, total):
 
     if args.copy:
         ffmpeg_cmd += ['-c', 'copy']
-    else:
-        ffmpeg_cmd += ['-c:v', 'h264_amf']
 
     ffmpeg_cmd += ['-ss', start, '-to', end, output_file]
 
