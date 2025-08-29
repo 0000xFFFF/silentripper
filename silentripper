@@ -10,11 +10,11 @@ import threading
 # Argument parsing
 parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')
 parser.add_argument('-d', '--duration', metavar='sec', type=float, default=1, help="Silence duration in seconds (default: 1, min: 1)")
-parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=0, help="Minimum duration for each sounded clip in seconds (default: 0)")
+parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=1, help="Minimum duration for each sounded clip in seconds (default: 0)")
 parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-40, help="Noise level in dB (default: -40)")
 parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec for faster but potentially glitchy output")
 parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
-parser.add_argument('-t', '--threads', metavar='N', type=int, default=1, help="Number of worker threads")
+parser.add_argument('-t', '--threads', metavar='N', type=int, default=4, help="Number of worker threads")
 parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: \"filename} (cut).{ext}\")")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
