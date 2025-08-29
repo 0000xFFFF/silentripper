@@ -203,11 +203,19 @@ print(f"\nFailed conversions: {failed_conversions}")
 # Concatenate sounded clips into final output
 print("===[ CONCAT ]===")
 concat_cmd = [
-    'ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'concat', '-safe', '0',
+    'ffmpeg', '-hide_banner', '-loglevel', 'error',
+    '-f', 'concat', '-safe', '0',
     '-y', '-i', 'clip_list.txt'
 ]
+
 if args.copy:
+    # Just copy streams, no GPU needed
     concat_cmd += ['-c', 'copy']
+elif args.gpu:
+    # Example: VAAPI on Linux
+    concat_cmd += ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']
+    # Example: AMF on Windows (switch if needed)
+    # concat_cmd += ['-c:v', 'h264_amf']
 
 concat_cmd += [output_file_name]
 
