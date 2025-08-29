@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import argparse
+import subprocess
+import sys
+import glob
+import os
+
+def get_duration(filename: str) -> float:
+    """Return duration of a video file in seconds using ffprobe."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            filename
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        print(f"⚠️ Could not read duration for {filename}", file=sys.stderr)
+        return 0.0
+
+def format_hms(seconds: float) -> str:
+    total = int(round(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Sum total duration of video files (supports wildcards like *cut*.mp4)"
+    )
+    parser.add_argument("files", nargs="+", help="Video files (wildcards allowed)")
+    parser.add_argument('-v', '--verbose', action='store_true', help="print files that are read")
+    args = parser.parse_args()
+
+    # Expand wildcards manually (glob)
+    file_list = []
+    for pattern in args.files:
+        matches = glob.glob(pattern)
+        if matches:
+            file_list.extend(matches)
+        else:
+            file_list.append(pattern)
+
+    if not file_list:
+        print("❌ No matching files found.", file=sys.stderr)
+        sys.exit(1)
+
+    total = 0
+
+    for f in file_list:
+        if os.path.isfile(f):
+            if args.verbose:
+                print(f, end='')
+            dur = get_duration(f)
+            total += dur
+            if args.verbose:
+                print(f" -- {format_hms(dur)} ({dur} s)")
+
+    print(f"Total duration: {format_hms(total)} ({total:.2f} seconds)")
+
+if __name__ == "__main__":
+    main()
+
