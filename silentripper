@@ -16,9 +16,11 @@ parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec fo
 parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
 parser.add_argument('-t', '--threads', metavar='N', type=int, default=4, help="Number of worker threads")
 parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: \"filename} (cut).{ext}\")")
-parser.add_argument('-g', '--gpu', action='store_true', help="Use GPU (AMD is by default edit the script to use something else)")
+parser.add_argument('-g', '--gpu', action='store_true', help="Tell FFmpeg to use GPU (AMD is by default edit the script to use something else)")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
+
+program_start_time = time.time()
 
 # File details
 input_file_path = Path(args.filename.name)
@@ -139,6 +141,8 @@ if args.pause:
     except:
         exit()
 
+print_mutex = threading.Lock()
+
 # Function to process a single clip
 def process_clip(clip, i, total):
 
@@ -160,7 +164,8 @@ def process_clip(clip, i, total):
 
     ffmpeg_cmd += [clip["file"]]
 
-    print(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']}) ", end='')
+    with print_mutex:
+        print(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']})")
 
     start_time = time.time()
     #result = subprocess.run(ffmpeg_cmd)
@@ -168,10 +173,12 @@ def process_clip(clip, i, total):
     elapsed = time.time() - start_time
 
     if result.returncode == 0:
-        print(f"ok (took: {elapsed:.2f}s)")
+        with print_mutex:
+            print(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']}) ok (took: {elapsed:.2f}s)")
         return clip["file"], True
     else:
-        print("fail")
+        with print_mutex:
+            print(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']}) fail")
         return clip["file"], False
 
 num_workers = args.threads
@@ -256,4 +263,4 @@ except:
     pass
 
 print("Cleanup complete.")
-
+print(f"Took: {time.time() - program_start_time:.2f}")
