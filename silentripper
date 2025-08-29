@@ -83,12 +83,16 @@ for line in ffmpeg_proc.stdout.read().decode().split("\n"):
         end_time, duration = line.split("silence_end: ")[1].split(" | silence_duration: ")
         muted_sections.append([start_time, end_time, duration])
 
-if args.verbose:
     # Print muted sections
+if args.verbose:
     sys.stdout.write("===[ MUTED TIMESTAMPS (START, END, DURATION) ]===\n")
-    for idx, (start, end, duration) in enumerate(muted_sections, start=1):
-        total_muted_duration += float(duration)
+for idx, (start, end, duration) in enumerate(muted_sections, start=1):
+    total_muted_duration += float(duration)
+
+    if args.verbose:
         sys.stdout.write(f"{idx}. Start: {start}, End: {end}, Duration: {duration} seconds\n")
+
+if args.verbose:
     sys.stdout.flush()
 
 sounded_clips = []  # will hold dicts
@@ -128,9 +132,11 @@ if muted_sections:
 # Print sounded sections
 if args.verbose:
     sys.stdout.write("===[ SOUNDED TIMESTAMPS (OUTPUT FILE, START, END, DURATION) ]===\n")
-    for idx, clip in enumerate(sounded_clips, start=1):
-        total_sounded_duration += float(clip["duration"])
+for idx, clip in enumerate(sounded_clips, start=1):
+    total_sounded_duration += float(clip["duration"])
+    if args.verbose:
         sys.stdout.write(f"{idx}. Output: {clip["file"]}, Start: {clip["start"]}, End: {clip["end"]}, Duration: {clip["duration"]} seconds\n")
+if args.verbose:
     sys.stdout.flush()
 
 # Convert seconds to HH:MM:SS
