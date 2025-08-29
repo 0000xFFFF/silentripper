@@ -18,6 +18,8 @@ parser.add_argument('-p', '--pause', action='store_true', help="Prompt before ea
 parser.add_argument('-t', '--threads', metavar='N', type=int, default=4, help="Number of worker threads")
 parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: \"filename} (cut).{ext}\")")
 parser.add_argument('-g', '--gpu', action='store_true', help="Tell FFmpeg to use GPU (AMD is by default edit the script to use something else)")
+parser.add_argument('-v', '--verbose', action='store_true', help="Be verbose")
+parser.add_argument('-vv', '--very_verbose', action='store_true', help="Be very verbose")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
 
@@ -48,15 +50,17 @@ def get_video_duration(file_path):
 total_duration = get_video_duration(full_file_path)
 
 # Print initial settings
-sys.stdout.write(f"Noise level.............: {args.noise} dB\n")
-sys.stdout.write(f"Silence duration........: {args.duration} s\n")
-sys.stdout.write(f"Minimum sounded duration: {args.min_duration} s\n")
-sys.stdout.write(f"Copy codec..............: {args.copy}\n")
-sys.stdout.write(f"GPU.....................: {args.gpu}\n")
-sys.stdout.write(f"Threads.................: {args.threads}\n")
-sys.stdout.write(f"Total video duration....: {total_duration:.2f} s\n")
-sys.stdout.write(f"Output file.............: {output_file_name}\n")
-sys.stderr.flush()
+if args.verbose:
+    sys.stdout.write(f"Silence duration........: {args.duration} s\n")
+    sys.stdout.write(f"Minimum sounded duration: {args.min_duration} s\n")
+    sys.stdout.write(f"Noise level.............: {args.noise} dB\n")
+    sys.stdout.write(f"Copy codec..............: {args.copy}\n")
+    sys.stdout.write(f"Pause...................: {args.pause}\n")
+    sys.stdout.write(f"Threads.................: {args.threads}\n")
+    sys.stdout.write(f"GPU.....................: {args.gpu}\n")
+    sys.stdout.write(f"Total video duration....: {total_duration:.2f} s\n")
+    sys.stdout.write(f"Output file.............: {output_file_name}\n")
+    sys.stderr.flush()
 
 # Run FFmpeg to detect silent sections
 ffmpeg_proc = subprocess.Popen(
@@ -79,12 +83,13 @@ for line in ffmpeg_proc.stdout.read().decode().split("\n"):
         end_time, duration = line.split("silence_end: ")[1].split(" | silence_duration: ")
         muted_sections.append([start_time, end_time, duration])
 
-# Print muted sections
-sys.stdout.write("===[ MUTED TIMESTAMPS (START, END, DURATION) ]===\n")
-for idx, (start, end, duration) in enumerate(muted_sections, start=1):
-    total_muted_duration += float(duration)
-    sys.stdout.write(f"{idx}. Start: {start}, End: {end}, Duration: {duration} seconds\n")
-sys.stdout.flush()
+if args.verbose:
+    # Print muted sections
+    sys.stdout.write("===[ MUTED TIMESTAMPS (START, END, DURATION) ]===\n")
+    for idx, (start, end, duration) in enumerate(muted_sections, start=1):
+        total_muted_duration += float(duration)
+        sys.stdout.write(f"{idx}. Start: {start}, End: {end}, Duration: {duration} seconds\n")
+    sys.stdout.flush()
 
 sounded_clips = []  # will hold dicts
 def add_sounded_clip(start, end):
@@ -121,11 +126,12 @@ if muted_sections:
         add_sounded_clip(start, end)
 
 # Print sounded sections
-sys.stdout.write("===[ SOUNDED TIMESTAMPS (OUTPUT FILE, START, END, DURATION) ]===\n")
-for idx, clip in enumerate(sounded_clips, start=1):
-    total_sounded_duration += float(clip["duration"])
-    sys.stdout.write(f"{idx}. Output: {clip["file"]}, Start: {clip["start"]}, End: {clip["end"]}, Duration: {clip["duration"]} seconds\n")
-sys.stdout.flush()
+if args.verbose:
+    sys.stdout.write("===[ SOUNDED TIMESTAMPS (OUTPUT FILE, START, END, DURATION) ]===\n")
+    for idx, clip in enumerate(sounded_clips, start=1):
+        total_sounded_duration += float(clip["duration"])
+        sys.stdout.write(f"{idx}. Output: {clip["file"]}, Start: {clip["start"]}, End: {clip["end"]}, Duration: {clip["duration"]} seconds\n")
+    sys.stdout.flush()
 
 # Convert seconds to HH:MM:SS
 def format_time(seconds):
@@ -139,6 +145,12 @@ sys.stdout.write(f"Altered clips: {altered_clips}\n")
 sys.stdout.write(f"Total muted duration: {format_time(total_muted_duration)} ({total_muted_duration:.2f} seconds)\n")
 sys.stdout.write(f"Total sounded duration: {format_time(total_sounded_duration)} ({total_sounded_duration:.2f} seconds)\n")
 sys.stdout.flush()
+
+if total_muted_duration == 0:
+    sys.stdout.write(f"No muted duration. Ajust --noise and try again.\n")
+    sys.stdout.flush()
+    exit()
+
 
 # Pause if necessary
 if args.pause:
@@ -175,8 +187,11 @@ def process_clip(clip, i, total):
         sys.stdout.flush()
 
     start_time = time.time()
-    #result = subprocess.run(ffmpeg_cmd)
-    result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result = None
+    if args.very_verbose:
+        result = subprocess.run(ffmpeg_cmd)
+    else:
+        result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     elapsed = time.time() - start_time
 
     if result.returncode == 0:
@@ -248,7 +263,7 @@ if args.gpu:
 
 concat_cmd += [output_file_name]
 
-sys.stdout.write(f"\nConcatenating clips into: {output_file_name}\n")
+sys.stdout.write(f"Concatenating clips into: {output_file_name}\n")
 sys.stdout.flush()
 
 result = subprocess.run(concat_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
