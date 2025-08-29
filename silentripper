@@ -15,7 +15,7 @@ parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-40, help="
 parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec for faster but potentially glitchy output")
 parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
 parser.add_argument('-t', '--threads', metavar='N', type=int, default=1, help="Number of worker threads")
-parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: {filename}_cut)")
+parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: \"filename} (cut).{ext}\")")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
 
@@ -24,7 +24,7 @@ input_file_path = Path(args.filename.name)
 file_name = input_file_path.stem
 file_extension = input_file_path.suffix
 full_file_path = input_file_path.absolute()
-output_file_name = args.output or f"{file_name}_cut{file_extension}"
+output_file_name = args.output or f"{file_name} (cut){file_extension}"
 
 # Global variables
 altered_clips = 0
