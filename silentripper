@@ -83,15 +83,13 @@ for line in ffmpeg_proc.stdout.read().decode().split("\n"):
         end_time, duration = line.split("silence_end: ")[1].split(" | silence_duration: ")
         muted_sections.append([start_time, end_time, duration])
 
-    # Print muted sections
+# Process muted sections
 if args.verbose:
     sys.stdout.write("===[ MUTED TIMESTAMPS (START, END, DURATION) ]===\n")
 for idx, (start, end, duration) in enumerate(muted_sections, start=1):
     total_muted_duration += float(duration)
-
     if args.verbose:
         sys.stdout.write(f"{idx}. Start: {start}, End: {end}, Duration: {duration} seconds\n")
-
 if args.verbose:
     sys.stdout.flush()
 
