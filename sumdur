@@ -67,7 +67,7 @@ def main():
 
     if args.half_time:
         half = total/2
-        print(f"Half duration: {format_hms(half)} ({half:.2f} seconds)")
+        print(f"x2 (half) duration: {format_hms(half)} ({half:.2f} seconds)")
 
 if __name__ == "__main__":
     main()
