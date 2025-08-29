@@ -135,7 +135,7 @@ print(f"Total sounded duration: {format_time(total_sounded_duration)} ({total_so
 # Pause if necessary
 if args.pause:
     try:
-        input("Press Enter to clean up temporary files...")
+        input("Press Enter to start processing...")
     except:
         exit()
 
@@ -200,18 +200,29 @@ with open("clip_list.txt", "w") as clip_list_file:
 
 print(f"\nFailed conversions: {failed_conversions}")
 
+if args.pause:
+    try:
+        input("Press Enter to concat videos...")
+    except:
+        exit()
+
 # Concatenate sounded clips into final output
 print("===[ CONCAT ]===")
 concat_cmd = [
     'ffmpeg', '-hide_banner', '-loglevel', 'error',
     '-f', 'concat', '-safe', '0',
-    '-y', '-i', 'clip_list.txt'
+    '-y'
 ]
 
 if args.copy:
-    # Just copy streams, no GPU needed
     concat_cmd += ['-c', 'copy']
 elif args.gpu:
+    concat_cmd += ['-hwaccel', 'vaapi', '-vaapi_device', '/dev/dri/renderD128']
+
+concat_cmd += ['-i', 'clip_list.txt']
+
+# Output options (after -i)
+if args.gpu:
     # Example: VAAPI on Linux
     concat_cmd += ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']
     # Example: AMF on Windows (switch if needed)
