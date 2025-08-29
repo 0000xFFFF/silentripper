@@ -16,6 +16,7 @@ parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec fo
 parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
 parser.add_argument('-t', '--threads', metavar='N', type=int, default=4, help="Number of worker threads")
 parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: \"filename} (cut).{ext}\")")
+parser.add_argument('-g', '--gpu', action='store_true', help="Use GPU (AMD is by default edit the script to use something else)")
 parser.add_argument('filename', type=argparse.FileType('r'))
 args = parser.parse_args()
 
@@ -48,6 +49,7 @@ print(f"Noise level.............: {args.noise} dB")
 print(f"Silence duration........: {args.duration} s")
 print(f"Minimum sounded duration: {args.min_duration} s")
 print(f"Copy codec..............: {args.copy}")
+print(f"GPU.....................: {args.gpu}")
 print(f"Threads.................: {args.threads}")
 print(f"Total video duration....: {total_duration:.2f} s")
 print(f"Output file.............: {output_file_name}")
@@ -139,15 +141,29 @@ if args.pause:
 
 # Function to process a single clip
 def process_clip(clip, i, total):
-    ffmpeg_cmd = ['ffmpeg', '-y']
-    if args.copy:
-        ffmpeg_cmd += ['-c', 'copy']
 
-    ffmpeg_cmd += ['-ss', clip["start"], '-to', clip["end"], '-i', str(full_file_path), clip["file"]]
+    ffmpeg_cmd = ['ffmpeg', '-y']
+
+    # Input options (before -i)
+    if args.gpu:
+        ffmpeg_cmd += ['-hwaccel', 'vaapi', '-vaapi_device', '/dev/dri/renderD128']
+    else:
+        if args.copy:
+            ffmpeg_cmd += ['-c', 'copy']
+
+    # Input file
+    ffmpeg_cmd += ['-ss', clip["start"], '-to', clip["end"], '-i', str(full_file_path)]
+
+    # Output options (after -i)
+    if args.gpu:
+        ffmpeg_cmd += ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']
+
+    ffmpeg_cmd += [clip["file"]]
 
     print(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']}) ", end='')
 
     start_time = time.time()
+    #result = subprocess.run(ffmpeg_cmd)
     result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     elapsed = time.time() - start_time
 
