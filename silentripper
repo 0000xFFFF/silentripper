@@ -18,7 +18,7 @@ RESET   = "\033[0m"
 BOLD    = "\033[1m"
 # ─────────────────────────────────────────────────────────────────────────────
 
-VERSION = "0.2.0"
+VERSION = "0.2.2"
 
 # Argument parsing
 parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')
@@ -86,15 +86,27 @@ ffmpeg_proc = subprocess.Popen(
 
 # Parse FFmpeg output for silence start/end timestamps
 muted_sections = []
-for line in ffmpeg_proc.stdout.read().decode().split("\n"):
-    line = line.strip()
-    if "silencedetect" not in line:
-        continue
-    if "silence_start: " in line:
-        start_time = line.split("silence_start: ")[1]
-    elif "silence_end: " in line:
-        end_time, duration = line.split("silence_end: ")[1].split(" | silence_duration: ")
-        muted_sections.append([start_time, end_time, duration])
+start_time = None
+if ffmpeg_proc.stdout is not None:
+    output = ffmpeg_proc.stdout.read().decode()
+
+    for line in output.splitlines():
+        line = line.strip()
+
+        if "silencedetect" not in line:
+            continue
+
+        if "silence_start: " in line:
+            start_time = line.split("silence_start: ")[1]
+
+        elif "silence_end: " in line and start_time is not None:
+            end_time, duration = line.split(
+                "silence_end: "
+            )[1].split(" | silence_duration: ")
+
+            muted_sections.append([start_time, end_time, duration])
+
+            start_time = None
 
 # Process muted sections
 if args.verbose:
