@@ -8,6 +8,16 @@ from pathlib import Path
 import concurrent.futures
 import threading
 
+# ── ANSI colors (no deps) ────────────────────────────────────────────────────
+GREEN   = "\033[32m"
+RED     = "\033[31m"
+GRAY    = "\033[90m"
+CYAN    = "\033[36m"
+YELLOW  = "\033[33m"
+RESET   = "\033[0m"
+BOLD    = "\033[1m"
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Argument parsing
 parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')
 parser.add_argument('-d', '--duration', metavar='sec', type=float, default=1, help="Silence duration in seconds (default: 1, min: 1)")
@@ -133,7 +143,7 @@ if args.verbose:
 for idx, clip in enumerate(sounded_clips, start=1):
     total_sounded_duration += float(clip["duration"])
     if args.verbose:
-        sys.stdout.write(f"{idx}. Output: {clip["file"]}, Start: {clip["start"]}, End: {clip["end"]}, Duration: {clip["duration"]} seconds\n")
+        sys.stdout.write(f"{idx}. Output: {clip['file']}, Start: {clip['start']}, End: {clip['end']}, Duration: {clip['duration']} seconds\n")
 if args.verbose:
     sys.stdout.flush()
 
@@ -155,13 +165,64 @@ if total_muted_duration == 0:
     sys.stdout.flush()
     exit()
 
-
 # Pause if necessary
 if args.pause:
     try:
         input("Press Enter to start processing...")
     except:
         exit()
+
+# ── Status tracking (shared state for the printer thread) ───────────────────
+_status_lock       = threading.Lock()
+_status_ok         = 0      # successfully converted clips
+_status_fail       = 0      # failed clips
+_status_duration   = 0.0    # sum of durations of processed clips (ok + fail)
+_processing_start  = 0.0    # set just before the thread-pool starts
+_status_stop       = False  # signal to stop the printer thread
+
+def _update_status(success: bool, clip_duration: float):
+    global _status_ok, _status_fail, _status_duration
+    with _status_lock:
+        if success:
+            _status_ok += 1
+        else:
+            _status_fail += 1
+        _status_duration += clip_duration
+
+def _render_status_line(total: int) -> str:
+    with _status_lock:
+        ok       = _status_ok
+        fail     = _status_fail
+        dur      = _status_duration
+        elapsed  = time.time() - _processing_start
+        processed = ok + fail
+
+    cps = processed / elapsed if elapsed > 0 else 0.0
+
+    ok_col   = f"{GREEN}{BOLD}{ok}{RESET}"
+    tot_col  = f"{GRAY}{total}{RESET}"
+    fail_col = f"{RED}{fail}{RESET}" if fail else f"{GRAY}0{RESET}"
+    dur_col  = f"{CYAN}{format_time(dur)}{RESET}"
+    cps_col  = f"{YELLOW}{cps:.2f} CpS{RESET}"
+
+    return f"\r  {ok_col} / {tot_col}  fail: {fail_col}  duration: {dur_col}  {cps_col}   "
+
+def _status_printer(total: int):
+    """Runs in its own thread; rewrites a single status line every 0.1 s."""
+    while True:
+        with _status_lock:
+            stop = _status_stop
+        line = _render_status_line(total)
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        if stop:
+            # One final newline so the prompt lands on a clean line
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            break
+        time.sleep(0.1)
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 print_mutex = threading.Lock()
 
@@ -186,32 +247,47 @@ def process_clip(clip, i, total):
 
     ffmpeg_cmd += [clip["file"]]
 
-    with print_mutex:
-        sys.stdout.write(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']})\n")
-        sys.stdout.flush()
+    if args.verbose:
+        with print_mutex:
+            sys.stdout.write(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']})\n")
+            sys.stdout.flush()
 
-    start_time = time.time()
+    clip_start = time.time()
     result = None
     if args.very_verbose:
         result = subprocess.run(ffmpeg_cmd)
     else:
         result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    elapsed = time.time() - start_time
+    elapsed = time.time() - clip_start
 
-    if result.returncode == 0:
+    success = result.returncode == 0
+
+    if args.verbose:
         with print_mutex:
-            sys.stdout.write(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']}) ok (took: {elapsed:.2f}s)\n")
+            status_word = f"{GREEN}ok{RESET}" if success else f"{RED}fail{RESET}"
+            sys.stdout.write(
+                f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} "
+                f"({clip['duration']}) {status_word} (took: {elapsed:.2f}s)\n"
+            )
             sys.stdout.flush()
-        return clip["file"], True
     else:
-        with print_mutex:
-            sys.stdout.write(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']}) fail\n")
-            sys.stdout.flush()
-        return clip["file"], False
+        _update_status(success, float(clip["duration"]))
+
+    return clip["file"], success
 
 num_workers = args.threads
-
 lock = threading.Lock()
+
+# ── Start status printer (only in non-verbose mode) ─────────────────────────
+total_clips = len(sounded_clips)
+printer_thread = None
+
+if not args.verbose and not args.very_verbose:
+    _processing_start = time.time()
+    printer_thread = threading.Thread(target=_status_printer, args=(total_clips,), daemon=True)
+    printer_thread.start()
+else:
+    _processing_start = time.time()
 
 # Process clips in parallel
 with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -227,6 +303,13 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
                         failed_conversions += 1
                     break
 
+# ── Stop the printer thread ──────────────────────────────────────────────────
+if printer_thread is not None:
+    with _status_lock:
+        _status_stop = True
+    printer_thread.join()
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 with open("clip_list.txt", "w") as clip_list_file:
     for clip in sounded_clips:
@@ -260,10 +343,7 @@ concat_cmd += ['-i', 'clip_list.txt']
 
 # Output options (after -i)
 if args.gpu:
-    # Example: VAAPI on Linux
     concat_cmd += ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']
-    # Example: AMF on Windows (switch if needed)
-    # concat_cmd += ['-c:v', 'h264_amf']
 
 concat_cmd += [output_file_name]
 
