@@ -222,12 +222,12 @@ def _render_status_line(total: int) -> str:
 
     cps = processed / elapsed if elapsed > 0 else 0.0
 
-    ok_col   = f"{GREEN}{BOLD}{ok}{RESET}"
-    tot_col  = f"{CYAN}{total}{RESET}"
-    fail_col = f"{RED}{fail}{RESET}" if fail else f"{GRAY}0{RESET}"
-    dur_col  = f"{GREEN}{format_time(dur)}{RESET}"
+    ok_col         = f"{GREEN}{BOLD}{ok}{RESET}"
+    tot_col        = f"{CYAN}{total}{RESET}"
+    fail_col       = f"{RED}{fail}{RESET}" if fail else f"{GRAY}0{RESET}"
+    dur_col        = f"{GREEN}{format_time(dur)}{RESET}"
     dur_total_col  = f"{CYAN}{format_time(total_sounded_duration)}{RESET}"
-    cps_col  = f"{YELLOW}{cps:.2f} CpS{RESET}"
+    cps_col        = f"{YELLOW}{cps:.2f} CpS{RESET}"
 
     return f"\r  {ok_col} / {tot_col} | {fail_col} | {dur_col} / {dur_total_col} | {cps_col}   "
 
