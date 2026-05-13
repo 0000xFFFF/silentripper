@@ -274,8 +274,6 @@ def process_clip(clip, i, total):
             sys.stdout.write(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']})\n")
             sys.stdout.flush()
 
-
-
     if args.very_verbose:
         sys.stdout.write(f"{' '.join(ffmpeg_cmd)}")
         sys.stdout.flush()
