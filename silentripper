@@ -215,12 +215,13 @@ def _render_status_line(total: int) -> str:
     cps = processed / elapsed if elapsed > 0 else 0.0
 
     ok_col   = f"{GREEN}{BOLD}{ok}{RESET}"
-    tot_col  = f"{GRAY}{total}{RESET}"
+    tot_col  = f"{CYAN}{total}{RESET}"
     fail_col = f"{RED}{fail}{RESET}" if fail else f"{GRAY}0{RESET}"
-    dur_col  = f"{CYAN}{format_time(dur)}{RESET}"
+    dur_col  = f"{GREEN}{format_time(dur)}{RESET}"
+    dur_total_col  = f"{CYAN}{format_time(total_sounded_duration)}{RESET}"
     cps_col  = f"{YELLOW}{cps:.2f} CpS{RESET}"
 
-    return f"\r  {ok_col} / {tot_col}  fail: {fail_col}  duration: {dur_col}  {cps_col}   "
+    return f"\r  {ok_col} / {tot_col} | {fail_col} | {dur_col} / {dur_total_col} | {cps_col}   "
 
 def _status_printer(total: int):
     """Runs in its own thread; rewrites a single status line every 0.1 s."""
