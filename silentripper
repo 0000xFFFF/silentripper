@@ -8,7 +8,8 @@ from pathlib import Path
 import concurrent.futures
 import threading
 
-# ── ANSI colors (no deps) ────────────────────────────────────────────────────
+#/// COLOR CODES
+
 GREEN   = "\033[32m"
 RED     = "\033[31m"
 GRAY    = "\033[90m"
@@ -16,9 +17,24 @@ CYAN    = "\033[36m"
 YELLOW  = "\033[33m"
 RESET   = "\033[0m"
 BOLD    = "\033[1m"
-# ─────────────────────────────────────────────────────────────────────────────
 
-VERSION = "0.2.2"
+#/// HELPERS
+
+def format_time(seconds):
+    return time.strftime("%H:%M:%S", time.gmtime(float(seconds)))
+
+# Get total video duration
+def get_video_duration(file_path):
+    ffprobe_cmd = [
+        'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1', file_path
+    ]
+    result = subprocess.run(ffprobe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return float(result.stdout.strip())
+
+#/// ARGS
+
+VERSION = "0.2.6"
 
 # Argument parsing
 parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')
@@ -45,20 +61,13 @@ file_extension = input_file_path.suffix
 full_file_path = input_file_path.absolute()
 output_file_name = args.output or f"{file_name} (cut){file_extension}"
 
+temp_extension = ".mkv" if args.copy else ".mp4"
+
 # Global variables
 altered_clips = 0
 total_muted_duration = 0
 total_sounded_duration = 0
 failed_conversions = 0
-
-# Get total video duration
-def get_video_duration(file_path):
-    ffprobe_cmd = [
-        'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-        '-of', 'default=noprint_wrappers=1:nokey=1', file_path
-    ]
-    result = subprocess.run(ffprobe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return float(result.stdout.strip())
 
 total_duration = get_video_duration(full_file_path)
 
@@ -71,14 +80,14 @@ if args.verbose:
     sys.stdout.write(f"Pause...................: {args.pause}\n")
     sys.stdout.write(f"Threads.................: {args.threads}\n")
     sys.stdout.write(f"GPU.....................: {args.gpu}\n")
-    sys.stdout.write(f"Total video duration....: {total_duration:.2f} s\n")
+    sys.stdout.write(f"Total video duration....: {format_time(total_duration)} ({total_duration:.2f} s)\n")
     sys.stdout.write(f"Output file.............: {output_file_name}\n")
     sys.stderr.flush()
 
 # Run FFmpeg to detect silent sections
 ffmpeg_proc = subprocess.Popen(
     [
-        'ffmpeg', '-hide_banner', '-vn', '-i', str(full_file_path),
+        'ffmpeg', '-nostdin', '-hide_banner', '-vn', '-i', str(full_file_path),
         '-af', f'silencedetect=n={args.noise}dB:d={args.duration}', '-f', 'null', '-'
     ],
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT
@@ -114,7 +123,7 @@ if args.verbose:
 for idx, (start, end, duration) in enumerate(muted_sections, start=1):
     total_muted_duration += float(duration)
     if args.verbose:
-        sys.stdout.write(f"{idx}. Start: {start}, End: {end}, Duration: {duration} seconds\n")
+        sys.stdout.write(f"{idx}. Start: {format_time(start)}, End: {format_time(end)}, Duration: {format_time(duration)} seconds\n")
 if args.verbose:
     sys.stdout.flush()
 
@@ -158,13 +167,10 @@ if args.verbose:
 for idx, clip in enumerate(sounded_clips, start=1):
     total_sounded_duration += float(clip["duration"])
     if args.verbose:
-        sys.stdout.write(f"{idx}. Output: {clip['file']}, Start: {clip['start']}, End: {clip['end']}, Duration: {clip['duration']} seconds\n")
+        sys.stdout.write(f"{idx}. Output: {clip['file']}, Start: {format_time(clip['start'])}, End: {format_time(clip['end'])}, Duration: {format_time(clip['duration'])} seconds\n")
 if args.verbose:
     sys.stdout.flush()
 
-# Convert seconds to HH:MM:SS
-def format_time(seconds):
-    return time.strftime("%H:%M:%S", time.gmtime(seconds))
 
 # Summary
 sys.stdout.write("\n")
@@ -187,7 +193,9 @@ if args.pause:
     except:
         exit()
 
-# ── Status tracking (shared state for the printer thread) ───────────────────
+
+#/// PRINTER THREAD
+
 _status_lock       = threading.Lock()
 _status_ok         = 0      # successfully converted clips
 _status_fail       = 0      # failed clips
@@ -238,14 +246,12 @@ def _status_printer(total: int):
             break
         time.sleep(0.1)
 
-# ─────────────────────────────────────────────────────────────────────────────
-
 print_mutex = threading.Lock()
 
 # Function to process a single clip
 def process_clip(clip, i, total):
 
-    ffmpeg_cmd = ['ffmpeg', '-y']
+    ffmpeg_cmd = ['ffmpeg', '-y', '-nostdin']
 
     # Input options (before -i)
     if args.gpu:
@@ -271,7 +277,7 @@ def process_clip(clip, i, total):
 
 
     if args.very_verbose:
-        sys.stdout.write(f"{" ".join(ffmpeg_cmd)}")
+        sys.stdout.write(f"{' '.join(ffmpeg_cmd)}")
         sys.stdout.flush()
 
     clip_start = time.time()
@@ -338,7 +344,7 @@ with open("clip_list.txt", "w") as clip_list_file:
         if clip["success"]:
             clip_list_file.write(f"file '{clip['file']}'\n")
 
-sys.stdout.write(f"\nFailed conversions: {failed_conversions}\n")
+sys.stdout.write(f"Failed conversions: {failed_conversions}\n")
 sys.stdout.flush()
 
 if args.pause:
@@ -353,7 +359,7 @@ sys.stdout.flush()
 concat_cmd = [
     'ffmpeg', '-hide_banner', '-loglevel', 'error',
     '-f', 'concat', '-safe', '0',
-    '-y'
+    '-y', '-nostdin'
 ]
 
 if args.gpu:
