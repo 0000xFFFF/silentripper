@@ -249,12 +249,12 @@ def process_clip(clip, i, total):
     # Input options (before -i)
     if args.gpu:
         ffmpeg_cmd += ['-hwaccel', 'vaapi', '-vaapi_device', '/dev/dri/renderD128']
-    else:
-        if args.copy:
-            ffmpeg_cmd += ['-c', 'copy']
 
     # Input file
     ffmpeg_cmd += ['-ss', clip["start"], '-to', clip["end"], '-i', str(full_file_path)]
+
+    if not args.gpu and args.copy:
+        ffmpeg_cmd += ['-c', 'copy']
 
     # Output options (after -i)
     if args.gpu:
@@ -266,6 +266,12 @@ def process_clip(clip, i, total):
         with print_mutex:
             sys.stdout.write(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']})\n")
             sys.stdout.flush()
+
+
+
+    if args.very_verbose:
+        sys.stdout.write(f"{" ".join(ffmpeg_cmd)}")
+        sys.stdout.flush()
 
     clip_start = time.time()
     result = None
@@ -349,9 +355,7 @@ concat_cmd = [
     '-y'
 ]
 
-if args.copy:
-    concat_cmd += ['-c', 'copy']
-elif args.gpu:
+if args.gpu:
     concat_cmd += ['-hwaccel', 'vaapi', '-vaapi_device', '/dev/dri/renderD128']
 
 concat_cmd += ['-i', 'clip_list.txt']
@@ -359,6 +363,8 @@ concat_cmd += ['-i', 'clip_list.txt']
 # Output options (after -i)
 if args.gpu:
     concat_cmd += ['-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi']
+elif args.copy:
+    concat_cmd += ['-c', 'copy']
 
 concat_cmd += [output_file_name]
 
