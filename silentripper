@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from globals import Variables
-from arguments import get_arguments, print_arguments
+from arguments import get_arguments
 from helpers import get_video_duration, pause, cleanup
 from mute_detect import get_muted_sections, get_sounded_sections, audio_summary
 from status_thread import StatusPrinter
@@ -24,9 +24,6 @@ def main():
     vars.temp_extension = ".mkv" if vars.args.copy else ".mp4"
 
     vars.total_duration = get_video_duration(vars.input_full_file_path)
-
-    if vars.args.verbose:
-        print_arguments(vars)
 
     get_muted_sections(vars)
     get_sounded_sections(vars)

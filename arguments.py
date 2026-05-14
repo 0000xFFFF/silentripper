@@ -6,31 +6,35 @@ from helpers import format_time
 def get_arguments():
     parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')
     parser.add_argument('-d', '--duration', metavar='sec', type=float, default=1, help="Silence duration in seconds (default: 1, min: 1)")
-    parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=1, help="Minimum duration for each sounded clip in seconds (default: 0)")
+    parser.add_argument('-m', '--min_duration', metavar='sec', type=float, default=1, help="Minimum duration for each sounded clip in seconds (default: 1)")
     parser.add_argument('-n', '--noise', metavar='dB', type=int, default=-40, help="Noise level in dB (default: -40)")
     parser.add_argument('-c', '--copy', action='store_true', help="Use copy codec for faster but potentially glitchy output")
     parser.add_argument('-p', '--pause', action='store_true', help="Prompt before each action")
     parser.add_argument('-t', '--threads', metavar='N', type=int, default=4, help="Number of worker threads")
-    parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: \"filename} (cut).{ext}\")")
+    parser.add_argument('-o', '--output', metavar='file', type=str, help="Output filename (default: \"filename} (cut).{ext}\")") 
     parser.add_argument('-g', '--gpu', action='store_true', help="Tell FFmpeg to use GPU (AMD is by default edit the script to use something else)")
     parser.add_argument('-v', '--verbose', action='store_true', help="Be verbose")
     parser.add_argument('-vv', '--very_verbose', action='store_true', help="Be very verbose")
     parser.add_argument('--version', action='version', version=f'%(prog)s {VERSION}')
     parser.add_argument('filename', type=str)
     args = parser.parse_args()
+    
+    # Validate that copy codec requires min_duration >= 1 for proper keyframe handling
+    if args.copy and args.min_duration < 1:
+        sys.stderr.write("Error: --copy requires --min_duration to be at least 1 second for proper keyframe alignment\n")
+        sys.exit(1)
+    
+
+    if args.verbose:
+        sys.stdout.write(f"Silence duration........: {args.duration} s\n")
+        sys.stdout.write(f"Minimum sounded duration: {args.min_duration} s\n")
+        sys.stdout.write(f"Noise level.............: {args.noise} dB\n")
+        sys.stdout.write(f"Copy codec..............: {args.copy}\n")
+        sys.stdout.write(f"Pause...................: {args.pause}\n")
+        sys.stdout.write(f"Threads.................: {args.threads}\n")
+        sys.stdout.write(f"GPU.....................: {args.gpu}\n")
+        sys.stdout.write(f"Total video duration....: {format_time(args.total_duration)} ({args.total_duration:.2f} s)\n")
+        sys.stdout.write(f"Output file.............: {args.output_file_name}\n")
+        sys.stderr.flush()
+
     return args
-
-def print_arguments(vars: Variables):
-
-    assert vars.args is not None
-
-    sys.stdout.write(f"Silence duration........: {vars.args.duration} s\n")
-    sys.stdout.write(f"Minimum sounded duration: {vars.args.min_duration} s\n")
-    sys.stdout.write(f"Noise level.............: {vars.args.noise} dB\n")
-    sys.stdout.write(f"Copy codec..............: {vars.args.copy}\n")
-    sys.stdout.write(f"Pause...................: {vars.args.pause}\n")
-    sys.stdout.write(f"Threads.................: {vars.args.threads}\n")
-    sys.stdout.write(f"GPU.....................: {vars.args.gpu}\n")
-    sys.stdout.write(f"Total video duration....: {format_time(vars.total_duration)} ({vars.total_duration:.2f} s)\n")
-    sys.stdout.write(f"Output file.............: {vars.output_file_name}\n")
-    sys.stderr.flush()
