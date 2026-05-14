@@ -4,7 +4,7 @@ import threading
 from enum import StrEnum
 from pathlib import PurePath
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 
 class Colors(StrEnum):
     GREEN   = "\033[32m"

@@ -17,6 +17,7 @@ class StatusPrinter:
 
         self.completed_clips = 0
         self.completed_duration = 0.0
+        self.failed_clips = 0
 
         self.thread_slots: dict[int, int] = {}
         self.slots = [
@@ -74,6 +75,8 @@ class StatusPrinter:
     def finish_clip(self, slot: int, success: bool, clip_duration: float):
         with self.lock:
             self.completed_clips += 1
+            if not success:
+                self.failed_clips += 1
             self.completed_duration += float(clip_duration)
             self.slots[slot]["active"] = False
             self.slots[slot]["progress"] = 0.0
@@ -108,11 +111,13 @@ class StatusPrinter:
             total = self.total_duration
             completed = self.completed_duration
             completed_clips = self.completed_clips
+            failed_clips = self.failed_clips
         pct = (completed + active_progress) / total if total > 0 else 0.0
         processed_time = format_time(completed + active_progress)
         total_time = format_time(total)
         total_label = f"{Colors.CYAN}total{Colors.RESET}"
-        clips_col = f"{Colors.YELLOW}{completed_clips}{Colors.RESET} / {Colors.CYAN}{self.total_clips}{Colors.RESET}"
+        fail_col = f"{Colors.RED}{failed_clips}{Colors.RESET}"
+        clips_col = f"{Colors.YELLOW}{completed_clips}{Colors.RESET} / {Colors.CYAN}{self.total_clips}{Colors.RESET} ({fail_col})"
         time_col = f"{Colors.GREEN}{processed_time}{Colors.RESET} / {Colors.CYAN}{total_time}{Colors.RESET}"
         return f"{total_label} {self._format_bar(pct)} | {clips_col} | {time_col}"
 

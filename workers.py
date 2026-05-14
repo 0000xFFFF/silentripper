@@ -39,7 +39,8 @@ def start_work(vars: Variables, status: StatusPrinter):
 
         my_line = None
         spinner = None
-        slot = None
+        slot = 0
+        clip_info = ""
         use_status = not vars.args.verbose and not vars.args.very_verbose
 
         if use_status:
