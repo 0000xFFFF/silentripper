@@ -24,7 +24,7 @@ def main():
     vars.temp_extension = ".mkv" if vars.args.copy else ".mp4"
     vars.total_duration = get_video_duration(vars.input_full_file_path)
 
-    if not vars.args.verbose:
+    if vars.args.verbose:
         print_video_info(vars)
 
     get_muted_sections(vars)
