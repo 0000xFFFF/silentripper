@@ -58,7 +58,7 @@ def get_sounded_sections(vars: Variables):
 
     altered_clips = 0
 
-    def add_sounded_clip(start, end):
+    def add_sounded_clip(start, end, next_start=None):
 
         assert vars.args is not None
 
@@ -68,11 +68,16 @@ def get_sounded_sections(vars: Variables):
         if end is None:
             end = str(vars.total_duration)
 
-        duration = round(float(end) - float(start), 5)
+        duration = float(end) - float(start)
         if duration < vars.args.min_duration:
             altered_clips += 1
-            end = str(round(float(end) + vars.args.min_duration - duration, 5))
-            duration = round(float(end) - float(start), 5)
+            desired_end = float(end) + vars.args.min_duration - duration
+            # Cap to video duration and next clip start
+            capped_end = min(desired_end, vars.total_duration)
+            if next_start is not None:
+                capped_end = min(capped_end, float(next_start))
+            end = str(capped_end)
+            duration = float(end) - float(start)
 
         vars.sounded_sections.append({
             "start": start,
@@ -86,13 +91,14 @@ def get_sounded_sections(vars: Variables):
     if vars.muted_sections:
         # Before first silence
         first_mute_start = vars.muted_sections[0][0]
-        add_sounded_clip("0", first_mute_start)
+        add_sounded_clip("0", first_mute_start, first_mute_start)
 
         # Between silences
         for i in range(len(vars.muted_sections)):
             start = vars.muted_sections[i][1]
             end = vars.muted_sections[i+1][0] if i+1 < len(vars.muted_sections) else None
-            add_sounded_clip(start, end)
+            next_start = vars.muted_sections[i+1][0] if i+1 < len(vars.muted_sections) else None
+            add_sounded_clip(start, end, next_start)
 
     if vars.args.verbose:
         sys.stdout.write("===[ SOUNDED TIMESTAMPS (OUTPUT FILE, START, END, DURATION) ]===\n")
