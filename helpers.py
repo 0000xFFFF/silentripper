@@ -79,19 +79,24 @@ def show_cursor():
 class Spinner:
     """Thread-safe spinner for displaying progress while processing"""
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    BAR_WIDTH = 20
     
-    def __init__(self, line_info: str, line_number: int, line_counter, print_lock):
+    def __init__(self, line_info: str, line_number: int, line_counter, print_lock, total_seconds: float | None = None):
         """
         Initialize spinner
         line_info: the clip info line to display with spinner
         line_number: which line this was printed on
         line_counter: shared list [current_line_count]
         print_lock: the print_mutex
+        total_seconds: clip duration for progress bar
         """
         self.line_info = line_info
         self.line_number = line_number
         self.line_counter = line_counter
         self.print_lock = print_lock
+        self.total_seconds = total_seconds
+        self.progress_seconds = 0.0
+        self.progress_lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread = None
         self.frame_idx = 0
@@ -106,6 +111,22 @@ class Spinner:
         self.stop_event.set()
         if self.thread:
             self.thread.join()
+
+    def update_progress(self, seconds: float):
+        if self.total_seconds is None:
+            return
+        with self.progress_lock:
+            self.progress_seconds = max(0.0, min(seconds, self.total_seconds))
+
+    def _format_progress(self) -> str:
+        if self.total_seconds is None or self.total_seconds <= 0:
+            return ""
+        with self.progress_lock:
+            progress = self.progress_seconds
+        pct = min(max(progress / self.total_seconds, 0.0), 1.0)
+        filled = int(self.BAR_WIDTH * pct)
+        bar = "#" * filled + "-" * (self.BAR_WIDTH - filled)
+        return f" [{bar}] {pct * 100:5.1f}%"
     
     def _spin(self):
         """Spinner loop - updates the line with rotating frames"""
@@ -116,7 +137,8 @@ class Spinner:
                 escape_sequence = ""
                 if lines_down > 0:
                     escape_sequence += f"\033[{lines_down}A"
-                escape_sequence += f"\033[2K\r{self.line_info}{self.FRAMES[self.frame_idx]}"
+                progress = self._format_progress()
+                escape_sequence += f"\033[2K\r{self.line_info}{self.FRAMES[self.frame_idx]}{progress}"
                 if lines_down > 0:
                     escape_sequence += f"\033[{lines_down}B"
                 sys.stdout.write(escape_sequence)

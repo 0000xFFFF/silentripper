@@ -48,7 +48,7 @@ def start_work(vars: Variables, status: StatusPrinter):
                 sys.stdout.flush()
             
             # Start spinner for this line - pass line_counter and print_mutex
-            spinner = Spinner(clip_info, my_line, line_counter, print_mutex)
+            spinner = Spinner(clip_info, my_line, line_counter, print_mutex, total_seconds=float(clip["duration"]))
             spinner.start()
 
         if vars.args.very_verbose:
@@ -57,10 +57,17 @@ def start_work(vars: Variables, status: StatusPrinter):
 
         clip_start = time.time()
         result = None
+
         if vars.args.very_verbose:
             result = subprocess.run(ffmpeg_cmd)
+        elif spinner:
+            ffmpeg_cmd = ffmpeg_cmd[:1] + [
+                '-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats'
+            ] + ffmpeg_cmd[1:]
+            result = _run_ffmpeg_with_progress(ffmpeg_cmd, spinner)
         else:
             result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
         elapsed = time.time() - clip_start
 
         # Stop spinner before printing result
@@ -86,6 +93,54 @@ def start_work(vars: Variables, status: StatusPrinter):
             status.update(success, float(clip["duration"]))
 
         return clip["file"], success
+
+    def _parse_ffmpeg_time(time_text: str) -> float:
+        if not time_text or time_text == "N/A":
+            return 0.0
+        parts = time_text.split(":")
+        if len(parts) != 3:
+            return 0.0
+        hours, minutes, seconds = parts
+        try:
+            return (int(hours) * 3600) + (int(minutes) * 60) + float(seconds)
+        except ValueError:
+            return 0.0
+
+    def _run_ffmpeg_with_progress(ffmpeg_cmd, spinner: Spinner):
+        proc = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+
+        stderr_output = ""
+        if proc.stdout is not None:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("out_time_ms="):
+                    value = line.split("=", 1)[1]
+                    try:
+                        spinner.update_progress(int(value) / 1_000_000.0)
+                    except ValueError:
+                        pass
+                elif line.startswith("out_time="):
+                    spinner.update_progress(_parse_ffmpeg_time(line.split("=", 1)[1]))
+                elif line == "progress=end":
+                    spinner.update_progress(float("inf"))
+
+        if proc.stderr is not None:
+            stderr_output = proc.stderr.read()
+
+        return subprocess.CompletedProcess(
+            args=ffmpeg_cmd,
+            returncode=proc.wait(),
+            stdout="",
+            stderr=stderr_output
+        )
 
     num_workers = vars.args.threads
     lock = threading.Lock()
