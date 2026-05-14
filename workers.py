@@ -39,6 +39,13 @@ def start_work(vars: Variables, status: StatusPrinter):
 
         my_line = None
         spinner = None
+        slot = None
+        use_status = not vars.args.verbose and not vars.args.very_verbose
+
+        if use_status:
+            slot = status.get_slot(threading.get_ident())
+            status.start_clip(slot, float(clip["duration"]), i, total)
+
         if vars.args.verbose:
             clip_info = f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} ({format_time(clip['duration'])}) "
             with print_mutex:
@@ -58,13 +65,18 @@ def start_work(vars: Variables, status: StatusPrinter):
         clip_start = time.time()
         result = None
 
+        use_progress = spinner is not None or use_status
+
         if vars.args.very_verbose:
             result = subprocess.run(ffmpeg_cmd)
-        elif spinner:
+        elif use_progress:
             ffmpeg_cmd = ffmpeg_cmd[:1] + [
                 '-hide_banner', '-loglevel', 'error', '-progress', 'pipe:1', '-nostats'
             ] + ffmpeg_cmd[1:]
-            result = _run_ffmpeg_with_progress(ffmpeg_cmd, spinner)
+            if spinner is not None:
+                result = _run_ffmpeg_with_progress(ffmpeg_cmd, spinner.update_progress)
+            else:
+                result = _run_ffmpeg_with_progress(ffmpeg_cmd, lambda s: status.update_progress(slot, s))
         else:
             result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -89,8 +101,8 @@ def start_work(vars: Variables, status: StatusPrinter):
                     escape_sequence += f"\033[{lines_down}B"
                 sys.stdout.write(escape_sequence)
                 sys.stdout.flush()
-        elif not vars.args.verbose:
-            status.update(success, float(clip["duration"]))
+        elif use_status:
+            status.finish_clip(slot, success, float(clip["duration"]))
 
         return clip["file"], success
 
@@ -106,7 +118,7 @@ def start_work(vars: Variables, status: StatusPrinter):
         except ValueError:
             return 0.0
 
-    def _run_ffmpeg_with_progress(ffmpeg_cmd, spinner: Spinner):
+    def _run_ffmpeg_with_progress(ffmpeg_cmd, progress_cb):
         proc = subprocess.Popen(
             ffmpeg_cmd,
             stdout=subprocess.PIPE,
@@ -124,13 +136,13 @@ def start_work(vars: Variables, status: StatusPrinter):
                 if line.startswith("out_time_ms="):
                     value = line.split("=", 1)[1]
                     try:
-                        spinner.update_progress(int(value) / 1_000_000.0)
+                        progress_cb(int(value) / 1_000_000.0)
                     except ValueError:
                         pass
                 elif line.startswith("out_time="):
-                    spinner.update_progress(_parse_ffmpeg_time(line.split("=", 1)[1]))
+                    progress_cb(_parse_ffmpeg_time(line.split("=", 1)[1]))
                 elif line == "progress=end":
-                    spinner.update_progress(float("inf"))
+                    progress_cb(float("inf"))
 
         if proc.stderr is not None:
             stderr_output = proc.stderr.read()
