@@ -6,14 +6,13 @@ import concurrent.futures
 
 from globals import Variables, print_mutex, Colors
 from status_thread import StatusPrinter
-from helpers import format_time, format_elapsed
+from helpers import format_time, format_elapsed, Spinner
 
 def start_work(vars: Variables, status: StatusPrinter):
 
     assert vars.args is not None
 
     # Track line numbers for each clip (in verbose mode)
-    clip_lines = {}
     line_counter = [0]  # Use list for nonlocal in nested function
 
     # Function to process a single clip
@@ -39,13 +38,18 @@ def start_work(vars: Variables, status: StatusPrinter):
         ffmpeg_cmd += [clip["file"]]
 
         my_line = None
+        spinner = None
         if vars.args.verbose:
+            clip_info = f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} ({format_time(clip['duration'])}) "
             with print_mutex:
                 my_line = line_counter[0]
-                clip_lines[clip["file"]] = my_line
                 line_counter[0] += 1
-                sys.stdout.write(f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} ({format_time(clip['duration'])}) \n")
+                sys.stdout.write(clip_info + "\n")
                 sys.stdout.flush()
+            
+            # Start spinner for this line - pass line_counter and print_mutex
+            spinner = Spinner(clip_info, my_line, line_counter, print_mutex)
+            spinner.start()
 
         if vars.args.very_verbose:
             sys.stdout.write(f"{' '.join(ffmpeg_cmd)}")
@@ -59,20 +63,21 @@ def start_work(vars: Variables, status: StatusPrinter):
             result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         elapsed = time.time() - clip_start
 
+        # Stop spinner before printing result
+        if spinner:
+            spinner.stop()
+
         success = result.returncode == 0
 
         if vars.args.verbose and my_line is not None:
             with print_mutex:
-                # Calculate how many lines to move up from current position
-                # After N printed lines with \n, cursor is at line N
+                status_word = f"{Colors.GREEN}ok{Colors.RESET}" if success else f"{Colors.RED}fail{Colors.RESET}"
                 lines_down = line_counter[0] - my_line
-                # Build entire escape sequence atomically in one write call
                 escape_sequence = ""
                 if lines_down > 0:
                     escape_sequence += f"\033[{lines_down}A"
                 escape_sequence += "\033[2K\r"
-                status_word = f"{Colors.GREEN}ok{Colors.RESET}" if success else f"{Colors.RED}fail{Colors.RESET}"
-                escape_sequence += f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} ({format_time(clip['duration'])}) {status_word} (took: {format_elapsed(elapsed)})\n"
+                escape_sequence += f"{clip_info}{status_word} (took: {format_elapsed(elapsed)})\n"
                 if lines_down > 0:
                     escape_sequence += f"\033[{lines_down}B"
                 sys.stdout.write(escape_sequence)
