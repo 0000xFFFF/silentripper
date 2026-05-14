@@ -7,7 +7,7 @@ from pathlib import Path
 
 from globals import Variables
 from arguments import get_arguments
-from helpers import get_video_duration, pause, cleanup, print_video_info, hide_cursor, show_cursor
+from helpers import get_video_duration, pause, cleanup, print_video_info, hide_cursor, show_cursor, format_elapsed
 from mute_detect import get_muted_sections, get_sounded_sections, audio_summary
 from status_thread import StatusPrinter
 from workers import start_work
@@ -62,7 +62,7 @@ def main():
     concat(vars)
     pause(vars.args.pause, "Press Enter to clean up temporary files...")
     cleanup(vars)
-    sys.stdout.write(f"Took: {time.time() - vars.program_start_time:.2f}\n")
+    sys.stdout.write(f"Took: {format_elapsed(time.time() - vars.program_start_time)}\n")
     sys.stdout.flush()
 
 
