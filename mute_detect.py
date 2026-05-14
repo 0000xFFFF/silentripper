@@ -1,7 +1,8 @@
 import sys
+import subprocess
+
 from globals import Variables
 from helpers import format_time
-import subprocess
 
 def get_muted_sections(vars: Variables):
 

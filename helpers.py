@@ -3,7 +3,8 @@ import sys
 import time
 import subprocess
 import threading
-from globals import Variables, print_mutex
+
+from globals import Variables
 
 def format_time(seconds):
     return time.strftime("%H:%M:%S", time.gmtime(float(seconds)))

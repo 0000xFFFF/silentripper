@@ -1,7 +1,7 @@
 import sys
 import argparse
-from globals import VERSION, Variables
-from helpers import format_time
+
+from globals import VERSION
 
 def get_arguments():
     parser = argparse.ArgumentParser(description='Remove silent parts from video using FFmpeg')

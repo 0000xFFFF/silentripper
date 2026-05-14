@@ -1,6 +1,7 @@
 import sys
 import time
 import threading
+
 from globals import Colors, Variables, print_mutex
 from helpers import format_time
 
