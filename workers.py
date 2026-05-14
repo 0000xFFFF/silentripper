@@ -90,8 +90,6 @@ def start_work(vars: Variables, status: StatusPrinter):
     num_workers = vars.args.threads
     lock = threading.Lock()
     
-    failed_conversions = 1
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
         total = len(vars.sounded_sections)
         futures = {executor.submit(process_clip, clip, i, total): clip for i, clip in enumerate(vars.sounded_sections, start=1)}
@@ -102,7 +100,6 @@ def start_work(vars: Variables, status: StatusPrinter):
                     if c["file"] == output_file:
                         c["success"] = success
                         if not success:
-                            failed_conversions += 1
+                            vars.failed_conversions += 1
                         break
 
-    return failed_conversions
