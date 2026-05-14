@@ -1,0 +1,39 @@
+import os
+import sys
+import time
+import subprocess
+from globals import Variables
+
+def format_time(seconds):
+    return time.strftime("%H:%M:%S", time.gmtime(float(seconds)))
+
+# Get total video duration
+def get_video_duration(file_path):
+    ffprobe_cmd = [
+        'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+        '-of', 'default=noprint_wrappers=1:nokey=1', file_path
+    ]
+    result = subprocess.run(ffprobe_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return float(result.stdout.strip())
+
+
+def pause(do_pause, message):
+    if do_pause:
+        try:
+            input(message)
+        except:
+            exit()
+
+
+def cleanup(vars: Variables):
+    for clip in vars.sounded_sections:
+        try:
+            os.remove(clip["file"])
+        except:
+            pass
+    try:
+        os.remove("clip_list.txt")
+    except:
+        pass
+
+    sys.stdout.write("Cleanup complete.\n")
