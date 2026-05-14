@@ -1,11 +1,10 @@
-import sys
 from argparse import Namespace
 from typing import Optional
 import threading
 from enum import StrEnum
 from pathlib import PurePath
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 class Colors(StrEnum):
     GREEN   = "\033[32m"
