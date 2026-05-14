@@ -3,8 +3,10 @@ import time
 import subprocess
 import threading
 import concurrent.futures
+
 from globals import Variables, print_mutex, Colors
 from status_thread import StatusPrinter
+from helpers import format_time
 
 def start_work(vars: Variables, status: StatusPrinter):
 
@@ -34,7 +36,7 @@ def start_work(vars: Variables, status: StatusPrinter):
 
         if vars.args.verbose:
             with print_mutex:
-                sys.stdout.write(f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} ({clip['duration']})\n")
+                sys.stdout.write(f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} ({format_time(clip['duration'])})\n")
                 sys.stdout.flush()
 
         if vars.args.very_verbose:
@@ -55,8 +57,8 @@ def start_work(vars: Variables, status: StatusPrinter):
             with print_mutex:
                 status_word = f"{Colors.GREEN}ok{Colors.RESET}" if success else f"{Colors.RED}fail{Colors.RESET}"
                 sys.stdout.write(
-                    f"{i}/{total} {clip['file']}: {clip['start']} -- {clip['end']} "
-                    f"({clip['duration']}) {status_word} (took: {elapsed:.2f}s)\n"
+                    f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} "
+                    f"({format_time(clip['duration'])}) {status_word} (took: {elapsed:.2f}s)\n"
                 )
                 sys.stdout.flush()
         else:

@@ -1,3 +1,4 @@
+import sys
 from argparse import Namespace
 from typing import Optional
 import threading
@@ -35,7 +36,7 @@ class Variables:
     output_file_name: str = ""
 
     temp_extension: str = ""
-    
+
     muted_sections = []
     sounded_sections = []
 

@@ -37,3 +37,10 @@ def cleanup(vars: Variables):
         pass
 
     sys.stdout.write("Cleanup complete.\n")
+
+
+def print_video_info(vars: Variables):
+    sys.stdout.write(f"Total video duration....: {format_time(vars.total_duration)} ({vars.total_duration:.2f} s)\n")
+    sys.stdout.write(f"Input file..............: {vars.input_file_path}\n")
+    sys.stdout.write(f"Output file.............: {vars.output_file_name}\n")
+    sys.stdout.flush()

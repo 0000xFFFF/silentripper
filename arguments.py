@@ -37,8 +37,6 @@ def get_arguments():
         sys.stdout.write(f"Pause...................: {args.pause}\n")
         sys.stdout.write(f"Threads.................: {args.threads}\n")
         sys.stdout.write(f"GPU.....................: {args.gpu}\n")
-        sys.stdout.write(f"Total video duration....: {format_time(args.total_duration)} ({args.total_duration:.2f} s)\n")
-        sys.stdout.write(f"Output file.............: {args.output_file_name}\n")
         sys.stderr.flush()
 
     return args
