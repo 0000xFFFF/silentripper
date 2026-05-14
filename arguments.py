@@ -21,9 +21,13 @@ def get_arguments():
     
     # Validate that copy codec requires min_duration >= 1 for proper keyframe handling
     if args.copy and args.min_duration < 1:
-        sys.stderr.write("Error: --copy requires --min_duration to be at least 1 second for proper keyframe alignment\n")
-        sys.exit(1)
+        sys.stderr.write("Warning: --copy requires --min_duration to be at least 1 second for proper keyframe alignment\n")
+        sys.stdout.flush()
     
+    if not args.copy:
+        sys.stdout.write("Using re-encoding method (may be slower but more reliable output)\n")
+        sys.stdout.write("If you want faster but potentially glitchy output, use --copy\n")
+        sys.stdout.flush()
 
     if args.verbose:
         sys.stdout.write(f"Silence duration........: {args.duration} s\n")
