@@ -3,11 +3,11 @@ import time
 import threading
 
 from globals import Variables, print_mutex, Colors
-from helpers import format_time
+from helpers import format_time, Spinner
 
 class StatusPrinter:
 
-    FRAMES = ["|", "/", "-", "\\"]
+    FRAMES = Spinner.FRAMES
     BAR_WIDTH = 20
 
     def __init__(self, vars: Variables):
