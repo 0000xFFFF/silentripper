@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 import sys
 import time
+import atexit
+import signal
 from pathlib import Path
 
 from globals import Variables
 from arguments import get_arguments
-from helpers import get_video_duration, pause, cleanup, print_video_info
+from helpers import get_video_duration, pause, cleanup, print_video_info, hide_cursor, show_cursor
 from mute_detect import get_muted_sections, get_sounded_sections, audio_summary
 from status_thread import StatusPrinter
 from workers import start_work
@@ -13,6 +15,17 @@ from concat import concat_prepare_list, concat
 
 def main():
     vars = Variables()
+
+    def _handle_exit(_signum=None, _frame=None):
+        show_cursor()
+        if _signum is not None:
+            sys.exit(1)
+
+    atexit.register(show_cursor)
+    signal.signal(signal.SIGINT, _handle_exit)
+    signal.signal(signal.SIGTERM, _handle_exit)
+
+    hide_cursor()
 
     vars.args = get_arguments()
     vars.program_start_time = time.time()

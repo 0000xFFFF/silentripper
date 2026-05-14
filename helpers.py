@@ -65,6 +65,16 @@ def print_video_info(vars: Variables):
     sys.stdout.flush()
 
 
+def hide_cursor():
+    sys.stdout.write("\033[?25l")
+    sys.stdout.flush()
+
+
+def show_cursor():
+    sys.stdout.write("\033[?25h")
+    sys.stdout.flush()
+
+
 class Spinner:
     """Thread-safe spinner for displaying progress while processing"""
     FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
