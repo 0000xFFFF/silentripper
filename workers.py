@@ -6,7 +6,7 @@ import concurrent.futures
 
 from globals import Variables, print_mutex, Colors
 from status_thread import StatusPrinter
-from helpers import format_time
+from helpers import format_time, format_elapsed
 
 def start_work(vars: Variables, status: StatusPrinter):
 
@@ -72,7 +72,7 @@ def start_work(vars: Variables, status: StatusPrinter):
                     escape_sequence += f"\033[{lines_down}A"
                 escape_sequence += "\033[2K\r"
                 status_word = f"{Colors.GREEN}ok{Colors.RESET}" if success else f"{Colors.RED}fail{Colors.RESET}"
-                escape_sequence += f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} ({format_time(clip['duration'])}) {status_word} (took: {elapsed:.2f}s)\n"
+                escape_sequence += f"{i}/{total} {clip['file']}: {format_time(clip['start'])} -- {format_time(clip['end'])} ({format_time(clip['duration'])}) {status_word} (took: {format_elapsed(elapsed)})\n"
                 if lines_down > 0:
                     escape_sequence += f"\033[{lines_down}B"
                 sys.stdout.write(escape_sequence)

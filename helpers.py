@@ -7,6 +7,24 @@ from globals import Variables
 def format_time(seconds):
     return time.strftime("%H:%M:%S", time.gmtime(float(seconds)))
 
+def format_elapsed(elapsed: float) -> str:
+    """Convert elapsed time in seconds to human readable format"""
+    if elapsed < 0.001:
+        return f"{elapsed*1000:.2f}ms"
+    elif elapsed < 1:
+        return f"{elapsed*1000:.0f}ms"
+    elif elapsed < 60:
+        return f"{elapsed:.1f}s"
+    elif elapsed < 3600:
+        minutes = int(elapsed // 60)
+        seconds = int(elapsed % 60)
+        return f"{minutes}m {seconds}s"
+    else:
+        hours = int(elapsed // 3600)
+        minutes = int((elapsed % 3600) // 60)
+        seconds = int(elapsed % 60)
+        return f"{hours}h {minutes}m {seconds}s"
+
 # Get total video duration
 def get_video_duration(file_path):
     ffprobe_cmd = [
