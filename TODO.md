@@ -1,9 +1,0 @@
-- more detailed output when i run the program tell me what it's doing like it's missing "Detecting silent intervals..." etc
-- need to add human readable times in output
-    - cut time (HH:MM:SS)
-    - kept time (HH:MM:SS)
-    - elapsed seconds (Xh Xm Xs ago) (program running)
-        - if we can get hour, min, sec from elapsed_sec display 'Xh Xm Xs ago'
-        - if we can get only min, sec from elapsed_sec display 'Xm Xs ago'
-        - if we can get only sec from elapsed_sec display 'Xs ago'
-    - ETA (same display format like elapsed time just don't have 'ago')
