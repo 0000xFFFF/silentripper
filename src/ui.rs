@@ -1,8 +1,9 @@
 //! Human-readable output: stage headers, HH:MM:SS, "Xh Xm Xs ago", ETA and progress lines.
 
 use std::io::{IsTerminal, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 static PROGRAM_START: OnceLock<Instant> = OnceLock::new();
 
@@ -41,6 +42,27 @@ pub fn human(secs: f64) -> String {
 /// Same as `human` with " ago" appended (used for elapsed time).
 pub fn ago(secs: f64) -> String {
     format!("{} ago", human(secs))
+}
+
+/// Busy time per pipeline stage (stages run in parallel, so these don't add up to wall time).
+#[derive(Default)]
+pub struct Timings {
+    pub decode: AtomicU64,
+    pub convert: AtomicU64,
+    pub upload: AtomicU64,
+    pub encode: AtomicU64,
+    /// Main thread blocked because the encoder side could not keep up.
+    pub stall: AtomicU64,
+    pub audio: AtomicU64,
+    pub mux: AtomicU64,
+}
+
+pub fn add(c: &AtomicU64, d: Duration) {
+    c.fetch_add(d.as_nanos() as u64, Ordering::Relaxed);
+}
+
+pub fn secs(c: &AtomicU64) -> f64 {
+    c.load(Ordering::Relaxed) as f64 / 1e9
 }
 
 pub fn stage(n: u32, of: u32, msg: &str) {

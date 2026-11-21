@@ -130,6 +130,10 @@ pub struct VaapiCtx {
     device: *mut ffi::AVBufferRef,
 }
 
+// The AVBufferRefs are reference-counted and libav's hwframe pool is thread-safe.
+unsafe impl Send for VaapiCtx {}
+unsafe impl Sync for VaapiCtx {}
+
 impl VaapiCtx {
     pub fn new(width: u32, height: u32) -> Result<Self> {
         unsafe {

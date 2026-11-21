@@ -8,7 +8,7 @@
 use crate::gpu::{self, Backend, Codec, VaapiCtx, Vendor};
 use crate::segments::{self, locate, Segment};
 use crate::silence::Detection;
-use crate::ui::{self, Progress};
+use crate::ui::{self, add, Progress, Timings};
 use anyhow::{anyhow, bail, Context, Result};
 use ffmpeg::codec::{self, threading};
 use ffmpeg::format::sample::Type as SampleType;
@@ -18,6 +18,10 @@ use ffmpeg::util::channel_layout::ChannelLayout;
 use ffmpeg::{decoder, encoder, frame, media, picture, Dictionary, Packet, Rational};
 use ffmpeg_next as ffmpeg;
 use std::path::Path;
+use std::sync::mpsc::{channel, sync_channel, Receiver, SyncSender};
+use std::sync::Arc;
+use std::thread::JoinHandle;
+use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GpuMode {
@@ -52,9 +56,8 @@ macro_rules! drain {
 struct VideoEnc {
     enc: encoder::Video,
     backend: Backend,
-    vaapi: Option<VaapiCtx>,
+    vaapi: Option<Arc<VaapiCtx>>,
     sw_fmt: Pixel,
-    scaler: Option<scaling::Context>,
     tb: Rational,
     out_idx: usize,
 }
@@ -88,7 +91,7 @@ fn open_video(
     if backend == Backend::Vaapi {
         let v = VaapiCtx::new(w, h)?;
         unsafe { v.attach(enc.as_mut_ptr()) };
-        vaapi = Some(v);
+        vaapi = Some(Arc::new(v));
         sw_fmt = Pixel::NV12;
     } else {
         enc.set_format(Pixel::YUV420P);
@@ -122,45 +125,160 @@ fn open_video(
         }
     }
     let opened = enc.open_with(d).with_context(|| format!("opening encoder `{name}`"))?;
-    Ok((VideoEnc { enc: opened, backend, vaapi, sw_fmt, scaler: None, tb, out_idx: 0 }, c))
+    Ok((VideoEnc { enc: opened, backend, vaapi, sw_fmt, tb, out_idx: 0 }, c))
 }
 
-impl VideoEnc {
-    fn encode(&mut self, f: &frame::Video, octx: &mut format::context::Output) -> Result<()> {
-        let mut conv = frame::Video::empty();
-        let src: &frame::Video = if f.format() == self.sw_fmt {
-            f
-        } else {
-            if self.scaler.is_none() {
-                self.scaler = Some(scaling::Context::get(
-                    f.format(),
-                    f.width(),
-                    f.height(),
-                    self.sw_fmt,
-                    f.width(),
-                    f.height(),
-                    scaling::Flags::BILINEAR,
-                )?);
+// ───────────────────────── encoder pipeline (threads) ─────────────────────────
+//
+//   main thread            convert thread              encode thread
+//   demux + decode  ──▶    swscale + GPU upload  ──▶   send_frame/receive_packet
+//   audio, muxing   ◀──────────────────── encoded packets ◀──────────────────────
+//
+// Each stage works on a different frame at the same time instead of strictly in turn.
+
+const QUEUE: usize = 6;
+
+struct VideoPipe {
+    tx: Option<SyncSender<frame::Video>>,
+    pkt_rx: Receiver<Packet>,
+    handles: Vec<JoinHandle<Result<()>>>,
+    tb: Rational,
+    out_idx: usize,
+    t: Arc<Timings>,
+}
+
+fn spawn_pipe(v: VideoEnc, t: Arc<Timings>) -> Result<VideoPipe> {
+    let VideoEnc { enc, vaapi, sw_fmt, tb, out_idx, .. } = v;
+    let (tx, rx_in) = sync_channel::<frame::Video>(QUEUE);
+    let (tx_mid, rx_mid) = sync_channel::<frame::Video>(QUEUE);
+    let (pkt_tx, pkt_rx) = channel::<Packet>();
+
+    let t1 = t.clone();
+    let conv = std::thread::Builder::new().name("convert".into()).spawn(move || -> Result<()> {
+        let mut scaler: Option<scaling::Context> = None; // created here: not Send
+        for f in rx_in {
+            let c0 = Instant::now();
+            let out = if f.format() == sw_fmt {
+                f
+            } else {
+                if scaler.is_none() {
+                    scaler = Some(scaling::Context::get(
+                        f.format(),
+                        f.width(),
+                        f.height(),
+                        sw_fmt,
+                        f.width(),
+                        f.height(),
+                        scaling::Flags::BILINEAR,
+                    )?);
+                }
+                let mut conv = frame::Video::empty();
+                scaler.as_mut().unwrap().run(&f, &mut conv)?;
+                conv.set_pts(f.pts());
+                conv
+            };
+            add(&t1.convert, c0.elapsed());
+            let out = match &vaapi {
+                Some(v) => {
+                    let u0 = Instant::now();
+                    let hw = v.upload(&out)?;
+                    add(&t1.upload, u0.elapsed());
+                    hw
+                }
+                None => out,
+            };
+            if tx_mid.send(out).is_err() {
+                break;
             }
-            self.scaler.as_mut().unwrap().run(f, &mut conv)?;
-            conv.set_pts(f.pts());
-            &conv
-        };
-        if let Some(v) = &self.vaapi {
-            let hw = v.upload(src)?;
-            self.enc.send_frame(&hw)?;
-        } else {
-            self.enc.send_frame(src)?;
         }
-        let (idx, tb) = (self.out_idx, self.tb);
-        drain!(self.enc, octx, idx, tb);
+        Ok(())
+    })?;
+
+    let t2 = t.clone();
+    let encth = std::thread::Builder::new().name("encode".into()).spawn(move || -> Result<()> {
+        let mut enc = enc;
+        let drain = |enc: &mut encoder::Video| -> bool {
+            loop {
+                let mut pkt = Packet::empty();
+                if enc.receive_packet(&mut pkt).is_err() {
+                    return true;
+                }
+                if pkt_tx.send(pkt).is_err() {
+                    return false;
+                }
+            }
+        };
+        for f in rx_mid {
+            let e0 = Instant::now();
+            enc.send_frame(&f)?;
+            drop(f);
+            let alive = drain(&mut enc);
+            add(&t2.encode, e0.elapsed());
+            if !alive {
+                return Ok(());
+            }
+        }
+        let e0 = Instant::now();
+        enc.send_eof()?;
+        drain(&mut enc);
+        add(&t2.encode, e0.elapsed());
+        Ok(())
+    })?;
+
+    Ok(VideoPipe { tx: Some(tx), pkt_rx, handles: vec![conv, encth], tb, out_idx, t })
+}
+
+impl VideoPipe {
+    fn submit(&mut self, f: frame::Video) -> Result<()> {
+        let s0 = Instant::now();
+        let ok = self.tx.as_ref().map(|tx| tx.send(f).is_ok()).unwrap_or(false);
+        add(&self.t.stall, s0.elapsed());
+        if ok {
+            Ok(())
+        } else {
+            Err(self.fail())
+        }
+    }
+
+    /// A worker stopped early: find out why.
+    fn fail(&mut self) -> anyhow::Error {
+        self.tx = None;
+        for h in self.handles.drain(..) {
+            match h.join() {
+                Ok(Err(e)) => return e,
+                Err(_) => return anyhow!("video encoder thread panicked"),
+                Ok(Ok(())) => {}
+            }
+        }
+        anyhow!("video encoder pipeline stopped unexpectedly")
+    }
+
+    fn write(&self, mut pkt: Packet, octx: &mut format::context::Output) -> Result<()> {
+        let m0 = Instant::now();
+        let otb = octx.stream(self.out_idx).unwrap().time_base();
+        pkt.set_stream(self.out_idx);
+        pkt.rescale_ts(self.tb, otb);
+        pkt.write_interleaved(octx)?;
+        add(&self.t.mux, m0.elapsed());
+        Ok(())
+    }
+
+    /// Write whatever packets the encoder has finished so far.
+    fn pump(&mut self, octx: &mut format::context::Output) -> Result<()> {
+        while let Ok(pkt) = self.pkt_rx.try_recv() {
+            self.write(pkt, octx)?;
+        }
         Ok(())
     }
 
     fn finish(&mut self, octx: &mut format::context::Output) -> Result<()> {
-        self.enc.send_eof()?;
-        let (idx, tb) = (self.out_idx, self.tb);
-        drain!(self.enc, octx, idx, tb);
+        self.tx = None; // closes the chain; workers flush and exit
+        while let Ok(pkt) = self.pkt_rx.recv() {
+            self.write(pkt, octx)?;
+        }
+        for h in self.handles.drain(..) {
+            h.join().map_err(|_| anyhow!("video encoder thread panicked"))??;
+        }
         Ok(())
     }
 }
@@ -169,7 +287,8 @@ impl VideoEnc {
 
 struct VideoPath<'a> {
     dec: decoder::Video,
-    enc: VideoEnc,
+    pipe: VideoPipe,
+    t: Arc<Timings>,
     segs: &'a [Segment],
     windows: Vec<(f64, f64)>,
     tb: f64,
@@ -185,8 +304,14 @@ impl VideoPath<'_> {
     }
 
     fn drain_decoded(&mut self, octx: &mut format::context::Output) -> Result<()> {
-        let mut fr = frame::Video::empty();
-        while self.dec.receive_frame(&mut fr).is_ok() {
+        loop {
+            let mut fr = frame::Video::empty();
+            let d0 = Instant::now();
+            let r = self.dec.receive_frame(&mut fr);
+            add(&self.t.decode, d0.elapsed());
+            if r.is_err() {
+                break;
+            }
             let Some(ts) = fr.timestamp() else { continue };
             let t = ts as f64 * self.tb;
             // 2ms tolerance: a frame sitting exactly on a cut point must not be lost
@@ -202,7 +327,8 @@ impl VideoPath<'_> {
                 self.last_out = out_t;
                 fr.set_pts(Some(pts));
                 fr.set_kind(picture::Type::None);
-                self.enc.encode(&fr, octx)?;
+                self.pipe.submit(fr)?;
+                self.pipe.pump(octx)?;
             }
         }
         Ok(())
@@ -212,7 +338,9 @@ impl VideoPath<'_> {
         let t = p.dts().or(p.pts()).map(|x| x as f64 * self.tb).unwrap_or(0.0);
         if self.in_window(t) {
             self.active = true;
+            let d0 = Instant::now();
             let _ = self.dec.send_packet(p);
+            add(&self.t.decode, d0.elapsed());
             self.drain_decoded(octx)?;
         } else if self.active {
             self.cut(octx)?;
@@ -233,7 +361,7 @@ impl VideoPath<'_> {
         if self.active {
             self.cut(octx)?;
         }
-        self.enc.finish(octx)
+        self.pipe.finish(octx)
     }
 }
 
@@ -361,6 +489,8 @@ pub fn run(
     o: &Opts,
     prog: &mut Progress,
 ) -> Result<Backend> {
+    let timings = Arc::new(Timings::default());
+    let wall = Instant::now();
     let mut ictx = format::input(input)?;
     let mut octx = format::output(output)
         .with_context(|| format!("cannot create {}", output.display()))?;
@@ -431,7 +561,8 @@ pub fn run(
         };
         vpath = Some(VideoPath {
             dec,
-            enc: venc,
+            pipe: spawn_pipe(venc, timings.clone())?,
+            t: timings.clone(),
             segs,
             windows,
             tb: f64::from(vtb),
@@ -511,9 +642,11 @@ pub fn run(
             Ok(()) => {
                 let si = packet.stream();
                 if si == a_in {
+                    let a0 = Instant::now();
                     if apath.dec.send_packet(&packet).is_ok() {
                         apath.drain_decoded(&mut octx)?;
                     }
+                    add(&timings.audio, a0.elapsed());
                     if vpath.is_none() {
                         prog.update(apath.emitted as f64 / apath.rate as f64);
                     }
@@ -536,5 +669,20 @@ pub fn run(
     apath.finish(&mut octx)?;
     octx.write_trailer()?;
     prog.finish();
+
+    let t = &timings;
+    ui::info(&format!(
+        "stage busy time (stages overlap; wall clock {}):",
+        ui::human(wall.elapsed().as_secs_f64())
+    ));
+    ui::info(&format!("  video decode      : {}", ui::human(ui::secs(&t.decode))));
+    ui::info(&format!("  colour convert    : {}", ui::human(ui::secs(&t.convert))));
+    if chosen == Backend::Vaapi {
+        ui::info(&format!("  GPU upload        : {}", ui::human(ui::secs(&t.upload))));
+    }
+    ui::info(&format!("  video encode      : {}  ({})", ui::human(ui::secs(&t.encode)), chosen.encoder_name(o.codec)));
+    ui::info(&format!("  audio             : {}", ui::human(ui::secs(&t.audio))));
+    ui::info(&format!("  muxing            : {}", ui::human(ui::secs(&t.mux))));
+    ui::info(&format!("  decoder waiting on encoder: {}", ui::human(ui::secs(&t.stall))));
     Ok(chosen)
 }
