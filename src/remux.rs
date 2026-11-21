@@ -7,7 +7,8 @@ use ffmpeg::{codec, encoder, format, media, Packet};
 use ffmpeg_next as ffmpeg;
 use std::path::Path;
 
-pub fn run(input: &Path, output: &Path, snapped: &[Segment]) -> Result<()> {
+pub fn run(input: &Path, output: &Path, snapped: &[Segment], prog: &mut crate::ui::Progress) -> Result<()> {
+    prog.set_total(crate::segments::total(snapped));
     let mut ictx = format::input(input)?;
     let mut octx = format::output(output).with_context(|| format!("cannot create {}", output.display()))?;
 
@@ -41,6 +42,7 @@ pub fn run(input: &Path, output: &Path, snapped: &[Segment]) -> Result<()> {
                 let Some(ts) = pkt.dts().or(pkt.pts()) else { continue };
                 let Some(i) = locate(snapped, ts as f64 * f) else { continue };
                 let s = &snapped[i];
+                prog.update((ts as f64 * f - s.start).max(0.0) + s.out_start);
                 let shift = ((s.start - s.out_start) / f).round() as i64;
                 pkt.set_pts(pkt.pts().map(|p| p - shift));
                 pkt.set_dts(pkt.dts().map(|d| d - shift));
@@ -63,5 +65,6 @@ pub fn run(input: &Path, output: &Path, snapped: &[Segment]) -> Result<()> {
         }
     }
     octx.write_trailer()?;
+    prog.finish();
     Ok(())
 }

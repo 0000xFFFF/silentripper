@@ -8,6 +8,7 @@
 use crate::gpu::{self, Backend, Codec, VaapiCtx, Vendor};
 use crate::segments::{self, locate, Segment};
 use crate::silence::Detection;
+use crate::ui::{self, Progress};
 use anyhow::{anyhow, bail, Context, Result};
 use ffmpeg::codec::{self, threading};
 use ffmpeg::format::sample::Type as SampleType;
@@ -17,7 +18,6 @@ use ffmpeg::util::channel_layout::ChannelLayout;
 use ffmpeg::{decoder, encoder, frame, media, picture, Dictionary, Packet, Rational};
 use ffmpeg_next as ffmpeg;
 use std::path::Path;
-use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GpuMode {
@@ -174,6 +174,7 @@ struct VideoPath<'a> {
     windows: Vec<(f64, f64)>,
     tb: f64,
     last_pts: i64,
+    last_out: f64,
     active: bool,
 }
 
@@ -198,6 +199,7 @@ impl VideoPath<'_> {
                     pts = self.last_pts + 1;
                 }
                 self.last_pts = pts;
+                self.last_out = out_t;
                 fr.set_pts(Some(pts));
                 fr.set_kind(picture::Type::None);
                 self.enc.encode(&fr, octx)?;
@@ -320,13 +322,29 @@ impl AudioPath {
 
 fn backend_plan(o: &Opts) -> Vec<Backend> {
     match o.gpu {
-        GpuMode::Off => vec![Backend::Cpu],
-        GpuMode::Nvidia => gpu::candidates(Vendor::Nvidia),
-        GpuMode::Amd => gpu::candidates(Vendor::Amd),
+        GpuMode::Off => {
+            ui::info("GPU not requested, using the CPU encoder");
+            vec![Backend::Cpu]
+        }
+        GpuMode::Nvidia => {
+            ui::info("GPU: NVIDIA requested (--gpu-nvidia)");
+            gpu::candidates(Vendor::Nvidia)
+        }
+        GpuMode::Amd => {
+            ui::info("GPU: AMD requested (--gpu-amd)");
+            gpu::candidates(Vendor::Amd)
+        }
         GpuMode::Auto => {
+            ui::info("Detecting GPU...");
             let vendors = gpu::detect_vendors();
             if vendors.is_empty() {
-                eprintln!("gpu: no NVIDIA/AMD GPU detected, using CPU encoder");
+                ui::info("no NVIDIA/AMD GPU detected, using the CPU encoder");
+            } else {
+                let names: Vec<&str> = vendors
+                    .iter()
+                    .map(|v| if *v == Vendor::Nvidia { "NVIDIA" } else { "AMD" })
+                    .collect();
+                ui::info(&format!("detected GPU vendor(s): {}", names.join(", ")));
             }
             let mut v: Vec<Backend> = vendors.into_iter().flat_map(gpu::candidates).collect();
             v.push(Backend::Cpu);
@@ -341,6 +359,7 @@ pub fn run(
     det: &Detection,
     segs: &[Segment],
     o: &Opts,
+    prog: &mut Progress,
 ) -> Result<Backend> {
     let mut ictx = format::input(input)?;
     let mut octx = format::output(output)
@@ -371,6 +390,7 @@ pub fn run(
         let mut errors = Vec::new();
         let mut opened = None;
         for b in plan {
+            ui::info(&format!("opening video encoder {}...", b.encoder_name(o.codec)));
             match open_video(b, o.codec, dec.width(), dec.height(), vtb, fps, dec.aspect_ratio(), global, o) {
                 Ok(x) => {
                     opened = Some(x);
@@ -383,10 +403,22 @@ pub fn run(
             Some(x) => x,
             None => bail!("no usable video encoder:\n  {}", errors.join("\n  ")),
         };
-        if !errors.is_empty() {
-            eprintln!("gpu: fell back ({})", errors.join("; "));
+        for e in &errors {
+            ui::info(&format!("unavailable: {e}"));
         }
         chosen = venc.backend;
+        ui::info(&format!(
+            "using {} ({}), {}x{}",
+            chosen.encoder_name(o.codec),
+            match chosen {
+                Backend::Cpu => "CPU",
+                Backend::Nvenc => "GPU / NVIDIA NVENC",
+                Backend::Vaapi => "GPU / AMD VAAPI",
+                Backend::Amf => "GPU / AMD AMF",
+            },
+            dec.width(),
+            dec.height()
+        ));
 
         let mut ost = octx.add_stream(Some(vcodec))?;
         ost.set_parameters(&venc.enc);
@@ -404,6 +436,7 @@ pub fn run(
             windows,
             tb: f64::from(vtb),
             last_pts: -1,
+            last_out: 0.0,
             active: false,
         });
     }
@@ -471,10 +504,7 @@ pub fn run(
     octx.write_header()?;
 
     // ---- main loop ----
-    let tty = std::io::IsTerminal::is_terminal(&std::io::stderr());
-    let total = (det.end).max(1.0);
-    let t0 = Instant::now();
-    let mut last_print = Instant::now();
+    prog.set_total(segments::total(segs));
     let mut packet = Packet::empty();
     loop {
         match packet.read(&mut ictx) {
@@ -484,14 +514,13 @@ pub fn run(
                     if apath.dec.send_packet(&packet).is_ok() {
                         apath.drain_decoded(&mut octx)?;
                     }
+                    if vpath.is_none() {
+                        prog.update(apath.emitted as f64 / apath.rate as f64);
+                    }
                 } else if si == v_in {
                     if let Some(v) = vpath.as_mut() {
                         v.packet(&packet, &mut octx)?;
-                        if tty && last_print.elapsed().as_millis() > 250 {
-                            let t = packet.dts().or(packet.pts()).unwrap_or(0) as f64 * v.tb;
-                            eprint!("\r  encoding {:5.1}%  ({:.1}s)", (t / total * 100.0).min(100.0), t0.elapsed().as_secs_f64());
-                            last_print = Instant::now();
-                        }
+                        prog.update(v.last_out);
                     }
                 }
             }
@@ -499,14 +528,13 @@ pub fn run(
             Err(e) => return Err(e.into()),
         }
     }
-    if tty {
-        eprint!("\r  encoding 100.0%                    \n");
-    }
+    ui::info("flushing encoders and writing trailer...");
 
     if let Some(v) = vpath.as_mut() {
         v.finish(&mut octx)?;
     }
     apath.finish(&mut octx)?;
     octx.write_trailer()?;
+    prog.finish();
     Ok(chosen)
 }

@@ -117,12 +117,22 @@ impl Detector {
     }
 }
 
-pub fn detect(path: &Path, noise_db: f64, min_duration: f64) -> Result<Detection> {
+pub fn detect(
+    path: &Path,
+    noise_db: f64,
+    min_duration: f64,
+    prog: &mut crate::ui::Progress,
+) -> Result<Detection> {
     let mut ictx = format::input(path).with_context(|| format!("cannot open {}", path.display()))?;
     let stream = ictx
         .streams()
         .best(media::Type::Audio)
         .ok_or_else(|| anyhow!("no audio stream found - nothing to detect silence in"))?;
+    let dur = ictx.duration() as f64 / 1_000_000.0;
+    if dur > 0.0 {
+        prog.set_total(dur);
+        crate::ui::info(&format!("input duration: {}", crate::ui::hms(dur)));
+    }
     let a_idx = stream.index();
     let tb = f64::from(stream.time_base());
     let video = ictx.streams().best(media::Type::Video).map(|v| (v.index(), f64::from(v.time_base())));
@@ -146,6 +156,12 @@ pub fn detect(path: &Path, noise_db: f64, min_duration: f64) -> Result<Detection
         rate,
     )?;
 
+    crate::ui::info(&format!(
+        "audio: {} Hz, {} channel(s), codec {:?}",
+        rate,
+        dec.channels(),
+        dec.id()
+    ));
     let mut det = Detector::new(noise_db, min_duration, rate);
     let mut t0: Option<f64> = None;
     let mut decoded = frame::Audio::empty();
@@ -192,6 +208,7 @@ pub fn detect(path: &Path, noise_db: f64, min_duration: f64) -> Result<Detection
                     continue; // skip a corrupt packet, keep going
                 }
                 handle(&mut dec, &mut det, &mut t0)?;
+                prog.update(det.total as f64 / rate as f64);
             }
             Err(ffmpeg::Error::Eof) => break,
             Err(e) => return Err(e.into()),

@@ -3,6 +3,7 @@ mod remux;
 mod segments;
 mod silence;
 mod transcode;
+mod ui;
 
 use anyhow::{bail, Result};
 use clap::{ArgGroup, Parser, ValueEnum};
@@ -12,6 +13,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 use transcode::{GpuMode, Opts};
+use ui::{hms, human, ago};
 
 #[derive(Copy, Clone, ValueEnum)]
 enum CodecArg {
@@ -101,6 +103,7 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    ui::start_clock();
     let a = Args::parse();
     ffmpeg::init()?;
     ffmpeg::log::set_level(if std::env::var_os("SILENTRIPPER_LOG").is_some() {
@@ -118,41 +121,83 @@ fn run() -> Result<()> {
         a.filename.with_file_name(format!("{stem}_ripped.{ext}"))
     });
 
-    // 1. detect
-    pause(a.pause, "detect silence?");
-    let t = Instant::now();
-    let det = silence::detect(&a.filename, a.noise, a.min_duration_silence)?;
-    eprintln!(
-        "detected {} silent intervals in {:.2}s (noise {} dB, min {}s)",
-        det.silences.len(),
-        t.elapsed().as_secs_f64(),
-        a.noise,
-        a.min_duration_silence
-    );
+    let mode = if a.gpu_nvidia {
+        GpuMode::Nvidia
+    } else if a.gpu_amd {
+        GpuMode::Amd
+    } else if a.gpu {
+        GpuMode::Auto
+    } else {
+        GpuMode::Off
+    };
 
+    eprintln!("silentripper {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("  input : {}", a.filename.display());
+    eprintln!("  output: {}", output.display());
+    eprintln!(
+        "  mode  : {}",
+        if a.copy {
+            "stream copy (no re-encode, cuts land on keyframes)".to_string()
+        } else {
+            format!("re-encode ({})", match mode {
+                GpuMode::Off => "CPU",
+                GpuMode::Auto => "GPU auto-detect",
+                GpuMode::Nvidia => "GPU NVIDIA",
+                GpuMode::Amd => "GPU AMD",
+            })
+        }
+    );
+    eprintln!();
+
+    // [1/3] detect
+    pause(a.pause, "detect silence?");
+    ui::stage(
+        1,
+        3,
+        &format!(
+            "Detecting silent intervals (noise floor {} dB, silence of at least {}s)...",
+            a.noise, a.min_duration_silence
+        ),
+    );
+    let t = Instant::now();
+    let mut prog = ui::Progress::new("Detecting", 0.0);
+    let det = silence::detect(&a.filename, a.noise, a.min_duration_silence, &mut prog)?;
+    prog.finish();
+    ui::info(&format!(
+        "found {} silent interval(s) in {}",
+        det.silences.len(),
+        human(t.elapsed().as_secs_f64())
+    ));
+    eprintln!();
+
+    // [2/3] plan
+    ui::stage(2, 3, "Planning cuts...");
     let mut segs = segments::sounded(&det, a.min_duration_sounded, a.pad);
     if segs.is_empty() {
         bail!("nothing but silence at this threshold - try a lower -n (e.g. -n -40)");
     }
+    if a.copy {
+        ui::info("snapping clip starts back to keyframes...");
+        segs = segments::snap_to_keyframes(&segs, &det.keyframes);
+    }
+    let source = (det.end - det.start).max(0.0);
+    let kept = segments::total(&segs);
+    let cut = (source - kept).max(0.0);
+    let pct = |x: f64| if source > 0.0 { x / source * 100.0 } else { 0.0 };
+    ui::info(&format!("source length : {}", hms(source)));
+    ui::info(&format!("cut (silent)  : {}  ({:.1}%)", hms(cut), pct(cut)));
+    ui::info(&format!("kept (sounded): {}  ({:.1}%) in {} clip(s)", hms(kept), pct(kept), segs.len()));
+    eprintln!();
 
-    // 2. cut
+    // [3/3] write
     pause(a.pause, "write output?");
     let t = Instant::now();
     if a.copy {
-        segs = segments::snap_to_keyframes(&segs, &det.keyframes);
-        eprintln!("keeping {} clips ({:.1}s of {:.1}s), stream copy", segs.len(), segments::total(&segs), det.end - det.start);
-        remux::run(&a.filename, &output, &segs)?;
+        ui::stage(3, 3, "Cutting and copying streams (no re-encode)...");
+        let mut prog = ui::Progress::new("Copying", kept);
+        remux::run(&a.filename, &output, &segs, &mut prog)?;
     } else {
-        eprintln!("keeping {} clips ({:.1}s of {:.1}s)", segs.len(), segments::total(&segs), det.end - det.start);
-        let mode = if a.gpu_nvidia {
-            GpuMode::Nvidia
-        } else if a.gpu_amd {
-            GpuMode::Amd
-        } else if a.gpu {
-            GpuMode::Auto
-        } else {
-            GpuMode::Off
-        };
+        ui::stage(3, 3, "Encoding...");
         let o = Opts {
             codec: match a.codec {
                 CodecArg::H264 => Codec::H264,
@@ -163,9 +208,15 @@ fn run() -> Result<()> {
             preset: a.preset.clone(),
             audio_bitrate: a.abitrate * 1000,
         };
-        let backend = transcode::run(&a.filename, &output, &det, &segs, &o)?;
-        eprintln!("encoder: {}", backend.encoder_name(o.codec));
+        let mut prog = ui::Progress::new("Encoding", kept);
+        transcode::run(&a.filename, &output, &det, &segs, &o, &mut prog)?;
     }
-    eprintln!("wrote {} in {:.2}s", output.display(), t.elapsed().as_secs_f64());
+    ui::info(&format!("write step took {}", human(t.elapsed().as_secs_f64())));
+
+    eprintln!();
+    eprintln!("Done. Wrote {}", output.display());
+    eprintln!("  cut (silent)  : {}  ({:.1}%)", hms(cut), pct(cut));
+    eprintln!("  kept (sounded): {}  ({:.1}%)", hms(kept), pct(kept));
+    eprintln!("  total elapsed : {}", ago(ui::elapsed_secs()));
     Ok(())
 }
