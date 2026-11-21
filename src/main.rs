@@ -32,12 +32,12 @@ struct Args {
     output: Option<PathBuf>,
 
     /// Minimum silence duration in seconds to cut
-    #[arg(short = 'd', long = "duration", value_name = "sec", default_value_t = 1.0)]
-    duration: f64,
+    #[arg(short = 'd', long = "min-duration-silence", value_name = "sec", default_value_t = 1.0)]
+    min_duration_silence: f64,
 
     /// Minimum duration of each sounded clip to keep, in seconds
-    #[arg(short = 'm', long = "min_duration", value_name = "sec", default_value_t = 0.0)]
-    min_duration: f64,
+    #[arg(short = 'm', long = "min-duration-sounded", value_name = "sec", default_value_t = 0.0)]
+    min_duration_sounded: f64,
 
     /// Noise level in dB below which audio counts as silence
     #[arg(short = 'n', long = "noise", value_name = "dB", default_value_t = -30.0, allow_negative_numbers = true)]
@@ -121,16 +121,16 @@ fn run() -> Result<()> {
     // 1. detect
     pause(a.pause, "detect silence?");
     let t = Instant::now();
-    let det = silence::detect(&a.filename, a.noise, a.duration)?;
+    let det = silence::detect(&a.filename, a.noise, a.min_duration_silence)?;
     eprintln!(
         "detected {} silent intervals in {:.2}s (noise {} dB, min {}s)",
         det.silences.len(),
         t.elapsed().as_secs_f64(),
         a.noise,
-        a.duration
+        a.min_duration_silence
     );
 
-    let mut segs = segments::sounded(&det, a.min_duration, a.pad);
+    let mut segs = segments::sounded(&det, a.min_duration_sounded, a.pad);
     if segs.is_empty() {
         bail!("nothing but silence at this threshold - try a lower -n (e.g. -n -40)");
     }
