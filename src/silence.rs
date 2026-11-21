@@ -5,7 +5,7 @@
 //!
 //! Semantics match `silencedetect` with default options: a sample is "silent" when its
 //! absolute value is below the noise threshold on *every* channel, and a run of silent
-//! samples counts as silence once it lasts at least `min_duration` seconds.
+//! samples counts as silence once it lasts at least `min_duration_silence` seconds.
 
 use anyhow::{anyhow, Context, Result};
 use ffmpeg_next as ffmpeg;
@@ -44,10 +44,10 @@ struct Detector {
 const CHUNK: usize = 256;
 
 impl Detector {
-    fn new(noise_db: f64, min_duration: f64, rate: u32) -> Self {
+    fn new(noise_db: f64, min_duration_silence: f64, rate: u32) -> Self {
         Self {
             thr: 10f64.powf(noise_db / 20.0) as f32,
-            need: ((min_duration * rate as f64).ceil() as u64).max(1),
+            need: ((min_duration_silence * rate as f64).ceil() as u64).max(1),
             rate: rate as f64,
             run_start: 0,
             run_len: 0,
@@ -120,7 +120,7 @@ impl Detector {
 pub fn detect(
     path: &Path,
     noise_db: f64,
-    min_duration: f64,
+    min_duration_silence: f64,
     prog: &mut crate::ui::Progress,
 ) -> Result<Detection> {
     let mut ictx = format::input(path).with_context(|| format!("cannot open {}", path.display()))?;
@@ -162,7 +162,7 @@ pub fn detect(
         dec.channels(),
         dec.id()
     ));
-    let mut det = Detector::new(noise_db, min_duration, rate);
+    let mut det = Detector::new(noise_db, min_duration_silence, rate);
     let mut t0: Option<f64> = None;
     let mut decoded = frame::Audio::empty();
     let mut converted = frame::Audio::empty();
