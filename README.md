@@ -1,4 +1,4 @@
-# silentripper (Rust)
+# silentripper
 
 Remove silent parts from video. Rust rewrite of 0000xFFFF/silentripper using libav directly
 (via `ffmpeg-next`) - **no ffmpeg/ffprobe subprocesses**.
