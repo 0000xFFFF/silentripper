@@ -1,0 +1,4 @@
+- project needs still a lot of testing
+    - need to test gpu
+    - rename projects: silentripper to silentripper-legacy, drop "-rs" for this project
+    - make release
