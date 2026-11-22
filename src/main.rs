@@ -1,4 +1,5 @@
 mod gpu;
+mod inspect;
 mod remux;
 mod segments;
 mod silence;
@@ -21,13 +22,31 @@ enum CodecArg {
     Hevc,
 }
 
+#[derive(Copy, Clone, ValueEnum)]
+enum LogLevel {
+    Quiet,
+    Error,
+    Warning,
+    Info,
+    Verbose,
+    Debug,
+}
+
+fn parse_kv(s: &str) -> Result<(String, String), String> {
+    match s.split_once('=') {
+        Some((k, v)) if !k.is_empty() => Ok((k.to_string(), v.to_string())),
+        _ => Err("expected KEY=VALUE".into()),
+    }
+}
+
 /// Remove silent parts from video. Pure libav: no ffmpeg/ffprobe subprocesses.
 #[derive(Parser)]
 #[command(version, about)]
 #[command(group(ArgGroup::new("gpumode").args(["gpu", "gpu_nvidia", "gpu_amd"])))]
 struct Args {
     /// Input video file
-    filename: PathBuf,
+    #[arg(required_unless_present_any = ["list_encoders", "list_opts"])]
+    filename: Option<PathBuf>,
 
     /// Output file (default: <input>_ripped.<ext>)
     #[arg(short, long)]
@@ -84,6 +103,76 @@ struct Args {
     /// Audio bitrate in kbit/s
     #[arg(long, default_value_t = 192)]
     abitrate: usize,
+
+    // ───────────── experiment / tuning options ─────────────
+    /// Video bitrate in kbit/s (bitrate mode instead of constant quality; ignores --crf)
+    #[arg(long, value_name = "kbps", help_heading = "Encoder tuning")]
+    bitrate: Option<usize>,
+
+    /// Max consecutive B-frames (0 = none; GPU encoders are often faster with 0)
+    #[arg(long, value_name = "N", help_heading = "Encoder tuning")]
+    bframes: Option<i32>,
+
+    /// Keyframe interval in frames
+    #[arg(long, value_name = "frames", help_heading = "Encoder tuning")]
+    gop: Option<u32>,
+
+    /// Encoder threads (libx264/libx265)
+    #[arg(long, value_name = "N", help_heading = "Encoder tuning")]
+    threads: Option<u32>,
+
+    /// Video decoder threads (0 = auto)
+    #[arg(long, value_name = "N", default_value_t = 0, help_heading = "Encoder tuning")]
+    decode_threads: usize,
+
+    /// Frames buffered between decode / convert / encode threads
+    #[arg(long, value_name = "N", default_value_t = 6, help_heading = "Encoder tuning")]
+    queue: usize,
+
+    /// VAAPI: frames in flight inside the encoder (libav default 2, max 64)
+    #[arg(long, value_name = "N", help_heading = "Encoder tuning")]
+    async_depth: Option<u32>,
+
+    /// VAAPI rate control: auto, CQP, CBR, VBR, ICQ, QVBR, AVBR
+    #[arg(long, value_name = "MODE", help_heading = "Encoder tuning")]
+    vaapi_rc: Option<String>,
+
+    /// VAAPI quality/speed trade-off (higher = faster, driver-dependent range)
+    #[arg(long, value_name = "N", allow_negative_numbers = true, help_heading = "Encoder tuning")]
+    vaapi_quality: Option<i32>,
+
+    /// NVENC preset: p1 (fastest) .. p7 (best quality)
+    #[arg(long, value_name = "p1..p7", help_heading = "Encoder tuning")]
+    nvenc_preset: Option<String>,
+
+    /// AMF quality: speed, balanced, quality
+    #[arg(long, value_name = "MODE", help_heading = "Encoder tuning")]
+    amf_quality: Option<String>,
+
+    /// Pass any libav encoder option straight through (repeatable, applied last)
+    #[arg(long = "enc-opt", value_name = "KEY=VALUE", value_parser = parse_kv, help_heading = "Encoder tuning")]
+    enc_opt: Vec<(String, String)>,
+
+    // ───────────── diagnostics ─────────────
+    /// Only encode this many seconds of output, then finish (quick benchmarks)
+    #[arg(long, value_name = "sec", help_heading = "Diagnostics")]
+    limit: Option<f64>,
+
+    /// Detect silence and print the plan, but write nothing
+    #[arg(long, help_heading = "Diagnostics")]
+    dry_run: bool,
+
+    /// libav log level (default: error)
+    #[arg(long, value_enum, value_name = "LEVEL", help_heading = "Diagnostics")]
+    log_level: Option<LogLevel>,
+
+    /// List the video encoders available in this libav build and exit
+    #[arg(long, help_heading = "Diagnostics")]
+    list_encoders: bool,
+
+    /// List the options of an encoder (e.g. h264_vaapi) and exit
+    #[arg(long, value_name = "ENCODER", help_heading = "Diagnostics")]
+    list_opts: Option<String>,
 }
 
 fn pause(on: bool, msg: &str) {
@@ -106,19 +195,33 @@ fn run() -> Result<()> {
     ui::start_clock();
     let a = Args::parse();
     ffmpeg::init()?;
-    ffmpeg::log::set_level(if std::env::var_os("SILENTRIPPER_LOG").is_some() {
-        ffmpeg::log::Level::Info
-    } else {
-        ffmpeg::log::Level::Error
+    ffmpeg::log::set_level(match a.log_level {
+        Some(LogLevel::Quiet) => ffmpeg::log::Level::Quiet,
+        Some(LogLevel::Error) => ffmpeg::log::Level::Error,
+        Some(LogLevel::Warning) => ffmpeg::log::Level::Warning,
+        Some(LogLevel::Info) => ffmpeg::log::Level::Info,
+        Some(LogLevel::Verbose) => ffmpeg::log::Level::Verbose,
+        Some(LogLevel::Debug) => ffmpeg::log::Level::Debug,
+        None if std::env::var_os("SILENTRIPPER_LOG").is_some() => ffmpeg::log::Level::Info,
+        None => ffmpeg::log::Level::Error,
     });
 
-    if !a.filename.exists() {
-        bail!("{} does not exist", a.filename.display());
+    if a.list_encoders {
+        inspect::list_encoders();
+        return Ok(());
+    }
+    if let Some(name) = &a.list_opts {
+        return inspect::list_options(name);
+    }
+    let input: PathBuf = a.filename.clone().expect("clap guarantees the input file");
+
+    if !input.exists() {
+        bail!("{} does not exist", input.display());
     }
     let output = a.output.clone().unwrap_or_else(|| {
-        let stem = a.filename.file_stem().unwrap_or_default().to_string_lossy();
-        let ext = a.filename.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_else(|| "mp4".into());
-        a.filename.with_file_name(format!("{stem}_ripped.{ext}"))
+        let stem = input.file_stem().unwrap_or_default().to_string_lossy();
+        let ext = input.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_else(|| "mp4".into());
+        input.with_file_name(format!("{stem}_ripped.{ext}"))
     });
 
     let mode = if a.gpu_nvidia {
@@ -132,7 +235,7 @@ fn run() -> Result<()> {
     };
 
     eprintln!("silentripper {}", env!("CARGO_PKG_VERSION"));
-    eprintln!("  input : {}", a.filename.display());
+    eprintln!("  input : {}", input.display());
     eprintln!("  output: {}", output.display());
     eprintln!(
         "  mode  : {}",
@@ -161,7 +264,7 @@ fn run() -> Result<()> {
     );
     let t = Instant::now();
     let mut prog = ui::Progress::new("Detecting", 0.0);
-    let det = silence::detect(&a.filename, a.noise, a.min_duration_silence, &mut prog)?;
+    let det = silence::detect(&input, a.noise, a.min_duration_silence, &mut prog)?;
     prog.finish();
     ui::info(&format!(
         "found {} silent interval(s) in {}",
@@ -189,16 +292,34 @@ fn run() -> Result<()> {
     ui::info(&format!("kept (sounded): {}  ({:.1}%) in {} clip(s)", hms(kept), pct(kept), segs.len()));
     eprintln!();
 
+    if a.dry_run {
+        eprintln!("Dry run: nothing written (elapsed {}).", ago(ui::elapsed_secs()));
+        return Ok(());
+    }
+
     // [3/3] write
     pause(a.pause, "write output?");
     let t = Instant::now();
     if a.copy {
         ui::stage(3, 3, "Cutting and copying streams (no re-encode)...");
         let mut prog = ui::Progress::new("Copying", kept);
-        remux::run(&a.filename, &output, &segs, &mut prog)?;
+        remux::run(&input, &output, &segs, &mut prog)?;
     } else {
         ui::stage(3, 3, "Encoding...");
         let o = Opts {
+            bitrate: a.bitrate,
+            bframes: a.bframes,
+            gop: a.gop,
+            threads: a.threads,
+            decode_threads: a.decode_threads,
+            queue: a.queue,
+            async_depth: a.async_depth,
+            vaapi_rc: a.vaapi_rc.clone(),
+            vaapi_quality: a.vaapi_quality,
+            nvenc_preset: a.nvenc_preset.clone(),
+            amf_quality: a.amf_quality.clone(),
+            enc_opts: a.enc_opt.clone(),
+            limit: a.limit,
             codec: match a.codec {
                 CodecArg::H264 => Codec::H264,
                 CodecArg::Hevc => Codec::Hevc,
@@ -209,7 +330,7 @@ fn run() -> Result<()> {
             audio_bitrate: a.abitrate * 1000,
         };
         let mut prog = ui::Progress::new("Encoding", kept);
-        transcode::run(&a.filename, &output, &det, &segs, &o, &mut prog)?;
+        transcode::run(&input, &output, &det, &segs, &o, &mut prog)?;
     }
     ui::info(&format!("write step took {}", human(t.elapsed().as_secs_f64())));
 

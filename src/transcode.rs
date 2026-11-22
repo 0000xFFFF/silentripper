@@ -37,6 +37,25 @@ pub struct Opts {
     pub crf: u32,
     pub preset: String,
     pub audio_bitrate: usize,
+    /// Target video bitrate in kbit/s (switches from constant quality to bitrate mode).
+    pub bitrate: Option<usize>,
+    pub bframes: Option<i32>,
+    pub gop: Option<u32>,
+    /// Encoder threads (libx264/libx265).
+    pub threads: Option<u32>,
+    /// Video decoder threads (0 = auto).
+    pub decode_threads: usize,
+    /// Frames buffered between pipeline stages.
+    pub queue: usize,
+    pub async_depth: Option<u32>,
+    pub vaapi_rc: Option<String>,
+    pub vaapi_quality: Option<i32>,
+    pub nvenc_preset: Option<String>,
+    pub amf_quality: Option<String>,
+    /// Raw `--enc-opt key=value` pairs, applied last (they win).
+    pub enc_opts: Vec<(String, String)>,
+    /// Stop after this many seconds of output (for quick benchmarks).
+    pub limit: Option<f64>,
 }
 
 macro_rules! drain {
@@ -60,6 +79,13 @@ struct VideoEnc {
     sw_fmt: Pixel,
     tb: Rational,
     out_idx: usize,
+    /// Human-readable list of the encoder options actually applied.
+    desc: String,
+}
+
+fn setopt(d: &mut Dictionary, applied: &mut Vec<String>, k: &str, v: &str) {
+    d.set(k, v);
+    applied.push(format!("{k}={v}"));
 }
 
 fn open_video(
@@ -100,32 +126,97 @@ fn open_video(
 
     let q = o.crf.to_string();
     let mut d = Dictionary::new();
+    let mut applied: Vec<String> = Vec::new();
+    let kbps = o.bitrate;
+    let mut user_keys: Vec<String> = Vec::new();
     match backend {
         Backend::Cpu => {
-            d.set("crf", &q);
-            d.set("preset", &o.preset);
+            match kbps {
+                Some(_) => {}
+                None => setopt(&mut d, &mut applied, "crf", &q),
+            }
+            setopt(&mut d, &mut applied, "preset", &o.preset);
             if codec_kind == Codec::Hevc {
-                d.set("x265-params", "log-level=error");
+                setopt(&mut d, &mut applied, "x265-params", "log-level=error");
             }
         }
         Backend::Nvenc => {
-            d.set("preset", "p4");
-            d.set("rc", "vbr");
-            d.set("cq", &q);
-            enc.set_bit_rate(0);
+            setopt(&mut d, &mut applied, "preset", o.nvenc_preset.as_deref().unwrap_or("p4"));
+            setopt(&mut d, &mut applied, "rc", "vbr");
+            if kbps.is_none() {
+                setopt(&mut d, &mut applied, "cq", &q);
+                enc.set_bit_rate(0);
+            }
         }
         Backend::Vaapi => {
-            d.set("qp", &q);
+            if kbps.is_none() {
+                setopt(&mut d, &mut applied, "qp", &q);
+            }
         }
         Backend::Amf => {
-            d.set("rc", "cqp");
-            d.set("qp_i", &q);
-            d.set("qp_p", &q);
-            d.set("quality", "speed");
+            if kbps.is_none() {
+                setopt(&mut d, &mut applied, "rc", "cqp");
+                setopt(&mut d, &mut applied, "qp_i", &q);
+                setopt(&mut d, &mut applied, "qp_p", &q);
+            } else {
+                setopt(&mut d, &mut applied, "rc", "vbr_peak");
+            }
+            setopt(&mut d, &mut applied, "quality", o.amf_quality.as_deref().unwrap_or("speed"));
         }
     }
-    let opened = enc.open_with(d).with_context(|| format!("opening encoder `{name}`"))?;
-    Ok((VideoEnc { enc: opened, backend, vaapi, sw_fmt, tb, out_idx: 0 }, c))
+    if let Some(k) = kbps {
+        enc.set_bit_rate(k * 1000);
+        applied.push(format!("bit_rate={k}k"));
+    }
+    if let Some(n) = o.bframes {
+        enc.set_max_b_frames(n.max(0) as usize);
+        applied.push(format!("max_b_frames={n}"));
+    }
+    if let Some(g) = o.gop {
+        enc.set_gop(g);
+        applied.push(format!("gop={g}"));
+    }
+    if let Some(t) = o.threads {
+        setopt(&mut d, &mut applied, "threads", &t.to_string());
+        user_keys.push("threads".into());
+    }
+    if let Some(n) = o.async_depth {
+        setopt(&mut d, &mut applied, "async_depth", &n.to_string());
+        user_keys.push("async_depth".into());
+    }
+    if backend == Backend::Vaapi {
+        if let Some(rc) = &o.vaapi_rc {
+            setopt(&mut d, &mut applied, "rc_mode", rc);
+        }
+        if let Some(qv) = o.vaapi_quality {
+            setopt(&mut d, &mut applied, "quality", &qv.to_string());
+        }
+    } else if o.vaapi_rc.is_some() || o.vaapi_quality.is_some() {
+        bail!("--vaapi-rc / --vaapi-quality only apply to the VAAPI encoder (using {name})");
+    }
+    for (k, v) in &o.enc_opts {
+        setopt(&mut d, &mut applied, k, v);
+        user_keys.push(k.clone());
+    }
+    // libav silently ignores option names an encoder doesn't know; catch typos instead.
+    for k in &user_keys {
+        let ck = std::ffi::CString::new(k.as_str())?;
+        let found = unsafe {
+            ffmpeg::ffi::av_opt_find(
+                enc.as_mut_ptr() as *mut std::ffi::c_void,
+                ck.as_ptr(),
+                std::ptr::null(),
+                0,
+                ffmpeg::ffi::AV_OPT_SEARCH_CHILDREN as i32,
+            )
+        };
+        if found.is_null() {
+            bail!("encoder `{name}` has no option `{k}` (see: silentripper --list-opts {name})");
+        }
+    }
+    let desc = applied.join(" ");
+    let opened = enc.open_with(d).with_context(|| format!("opening encoder `{name}` with options [{desc}]"))?;
+    Ok((VideoEnc { enc: opened, backend, vaapi, sw_fmt, tb, out_idx: 0, desc }, c))
 }
 
 // ───────────────────────── encoder pipeline (threads) ─────────────────────────
@@ -136,8 +227,6 @@ fn open_video(
 //
 // Each stage works on a different frame at the same time instead of strictly in turn.
 
-const QUEUE: usize = 6;
-
 struct VideoPipe {
     tx: Option<SyncSender<frame::Video>>,
     pkt_rx: Receiver<Packet>,
@@ -147,10 +236,11 @@ struct VideoPipe {
     t: Arc<Timings>,
 }
 
-fn spawn_pipe(v: VideoEnc, t: Arc<Timings>) -> Result<VideoPipe> {
+fn spawn_pipe(v: VideoEnc, t: Arc<Timings>, queue: usize) -> Result<VideoPipe> {
     let VideoEnc { enc, vaapi, sw_fmt, tb, out_idx, .. } = v;
-    let (tx, rx_in) = sync_channel::<frame::Video>(QUEUE);
-    let (tx_mid, rx_mid) = sync_channel::<frame::Video>(QUEUE);
+    let queue = queue.max(1);
+    let (tx, rx_in) = sync_channel::<frame::Video>(queue);
+    let (tx_mid, rx_mid) = sync_channel::<frame::Video>(queue);
     let (pkt_tx, pkt_rx) = channel::<Packet>();
 
     let t1 = t.clone();
@@ -510,7 +600,7 @@ pub fn run(
         let mut dctx = codec::context::Context::from_parameters(vs.parameters())?;
         let mut cfg = threading::Config::default();
         cfg.kind = threading::Type::Frame;
-        cfg.count = 0;
+        cfg.count = o.decode_threads;
         dctx.set_threading(cfg);
         let dec = dctx.decoder().video()?;
 
@@ -537,6 +627,7 @@ pub fn run(
             ui::info(&format!("unavailable: {e}"));
         }
         chosen = venc.backend;
+        ui::info(&format!("encoder options: {}", if venc.desc.is_empty() { "(defaults)".into() } else { venc.desc.clone() }));
         ui::info(&format!(
             "using {} ({}), {}x{}",
             chosen.encoder_name(o.codec),
@@ -561,7 +652,7 @@ pub fn run(
         };
         vpath = Some(VideoPath {
             dec,
-            pipe: spawn_pipe(venc, timings.clone())?,
+            pipe: spawn_pipe(venc, timings.clone(), o.queue)?,
             t: timings.clone(),
             segs,
             windows,
@@ -635,7 +726,11 @@ pub fn run(
     octx.write_header()?;
 
     // ---- main loop ----
-    prog.set_total(segments::total(segs));
+    let kept_total = segments::total(segs);
+    prog.set_total(o.limit.map_or(kept_total, |l| l.min(kept_total)));
+    if let Some(l) = o.limit {
+        ui::info(&format!("--limit: will stop after {} of output", ui::hms(l)));
+    }
     let mut packet = Packet::empty();
     loop {
         match packet.read(&mut ictx) {
@@ -659,6 +754,15 @@ pub fn run(
             }
             Err(ffmpeg::Error::Eof) => break,
             Err(e) => return Err(e.into()),
+        }
+        if let Some(l) = o.limit {
+            let cur = match vpath.as_ref() {
+                Some(v) => v.last_out,
+                None => apath.emitted as f64 / apath.rate as f64,
+            };
+            if cur >= l {
+                break;
+            }
         }
     }
     ui::info("flushing encoders and writing trailer...");
