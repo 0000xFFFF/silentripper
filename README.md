@@ -27,10 +27,9 @@ Same flags as the original: `-d sec` (min silence, default 1), `-m sec` (min kep
 `-c` copy, `-p` pause. Extras: `-o`, `--pad sec`, `--codec h264|hevc`, `--crf N`, `--preset`, `--abitrate kbps`.
 `SILENTRIPPER_LOG=1` shows libav's own log output.
 
-See more in [MORE.md](MORE.md).
-
 ## GPU notes
 - `--gpu` picks the vendor from PCI ids (Linux) or available encoders, tries the hardware encoder and falls back to CPU if it can't open.
 - `--gpu-nvidia` / `--gpu-amd` never fall back: you get libav's error instead.
 - Only *encoding* is on the GPU; decoding stays on the CPU.
 - AMD on Linux needs Mesa VAAPI (`/dev/dri/renderD*`); on Windows it uses AMF.
+- See more in [MORE.md](MORE.md).
