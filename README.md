@@ -12,8 +12,9 @@ Remove silent parts from video. Rust rewrite of 0000xFFFF/silentripper using lib
 Needs FFmpeg dev libs (libavcodec/format/util/swresample/swscale/avfilter/avdevice, pkg-config, clang).
 
 ```sh
-sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
-                 libavfilter-dev libavdevice-dev pkg-config clang
+sudo apt install clang libavcodec-dev libavformat-dev \
+                 libavutil-dev libswresample-dev libswscale-dev \
+                 libavfilter-dev libavdevice-dev pkg-config
 cargo build --release        # binary: target/release/silentripper
 ```
 
