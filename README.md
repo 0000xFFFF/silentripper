@@ -11,17 +11,20 @@ Remove silent parts from video. Rust rewrite of 0000xFFFF/silentripper using lib
 ## Build
 Needs FFmpeg dev libs (libavcodec/format/util/swresample/swscale/avfilter/avdevice, pkg-config, clang).
 
-    sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
-                     libavfilter-dev libavdevice-dev pkg-config clang
-    cargo build --release        # binary: target/release/silentripper
-
+```sh
+sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev \
+                 libavfilter-dev libavdevice-dev pkg-config clang
+cargo build --release        # binary: target/release/silentripper
+```
 
 ## Usage
-    silentripper video.mp4                       # -> video_ripped.mp4
-    silentripper video.mp4 -c                    # stream copy, near-instant, cuts on keyframes
-    silentripper video.mp4 --gpu                 # auto-detect GPU
-    silentripper video.mp4 --gpu-nvidia          # NVENC
-    silentripper video.mp4 --gpu-amd             # VAAPI (Linux) / AMF (Windows)
+```sh
+silentripper video.mp4                       # -> video_ripped.mp4
+silentripper video.mp4 -c                    # stream copy, near-instant, cuts on keyframes
+silentripper video.mp4 --gpu                 # auto-detect GPU
+silentripper video.mp4 --gpu-nvidia          # NVENC
+silentripper video.mp4 --gpu-amd             # VAAPI (Linux) / AMF (Windows)
+```
 
 Same flags as the original: `-d sec` (min silence, default 1), `-m sec` (min kept clip), `-n dB` (default -30),
 `-c` copy, `-p` pause. Extras: `-o`, `--pad sec`, `--codec h264|hevc`, `--crf N`, `--preset`, `--abitrate kbps`.
@@ -32,4 +35,4 @@ Same flags as the original: `-d sec` (min silence, default 1), `-m sec` (min kep
 - `--gpu-nvidia` / `--gpu-amd` never fall back: you get libav's error instead.
 - Only *encoding* is on the GPU; decoding stays on the CPU.
 - AMD on Linux needs Mesa VAAPI (`/dev/dri/renderD*`); on Windows it uses AMF.
-- See more in [MORE.md](MORE.md).
+- See more in [DOCS.md](DOCS.md).
