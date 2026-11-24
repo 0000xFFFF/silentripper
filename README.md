@@ -27,7 +27,7 @@ silentripper video.mp4 --gpu-nvidia          # NVENC
 silentripper video.mp4 --gpu-amd             # VAAPI (Linux) / AMF (Windows)
 ```
 
-Same flags as the original: `-d sec` (min silence, default 1), `-m sec` (min kept clip), `-n dB` (default -30),
+Same flags as the original: `-d sec` (min silence, default 1), `-m sec` (min kept clip), `-n dB` (default -40),
 `-c` copy, `-p` pause. Extras: `-o`, `--pad sec`, `--codec h264|hevc`, `--crf N`, `--preset`, `--abitrate kbps`.
 `SILENTRIPPER_LOG=1` shows libav's own log output.
 

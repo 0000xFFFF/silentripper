@@ -61,7 +61,7 @@ struct Args {
     min_duration_sounded: f64,
 
     /// Noise level in dB below which audio counts as silence
-    #[arg(short = 'n', long = "noise", value_name = "dB", default_value_t = -30.0, allow_negative_numbers = true)]
+    #[arg(short = 'n', long = "noise", value_name = "dB", default_value_t = -40.0, allow_negative_numbers = true)]
     noise: f64,
 
     /// Keep this many seconds of padding around sounded clips
